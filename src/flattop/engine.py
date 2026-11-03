@@ -45,6 +45,21 @@ DIVERT_NM = 200.0
 DEFAULT_INTERRUPTS: frozenset[EventKind] = frozenset(
     {"dawn", "dusk", "waypoint", "sighting", "attack", "engagement_pending"}
 )
+# Two-player: the clock is shared, so stopping on a private event (one side's sighting) would tell
+# the other side something happened. Only events both sides receive may stop the clock.
+PUBLIC_INTERRUPTS: frozenset[EventKind] = frozenset({"dawn", "dusk", "attack", "engagement_pending"})
+
+Interrupts = frozenset[EventKind] | Mapping[Side, frozenset[EventKind]]
+
+
+def two_player_interrupts(kinds: frozenset[EventKind] = PUBLIC_INTERRUPTS) -> dict[Side, frozenset[EventKind]]:
+    return {side: kinds for side in Side}
+
+
+def _should_stop(events: list[Event], stop_on: Interrupts) -> bool:
+    if isinstance(stop_on, frozenset):
+        return any(e.kind in stop_on for e in events)
+    return any(e.kind in stop_on.get(side, frozenset()) for e in events for side in e.visible_to)
 
 
 class EngineError(RuntimeError):
@@ -324,7 +339,7 @@ def _engage(state: GameState, m: StrikeMission, resolver: Resolver, rng: random.
     covering = [t for t in state.task_forces
                 if t.side is target.side and t.afloat and distance_nm(t.pos, target.pos) <= MUTUAL_CAP_NM]
     cap: dict[str, int] = {}
-    for t in covering:
+    for t in covering if state.is_day() else []:
         for k, n in _cap_by_type(state, t).items():
             cap[k] = cap.get(k, 0) + n
     e = Engagement(
@@ -420,7 +435,7 @@ def step(
     *,
     minutes: int,
     resolver: Resolver,
-    stop_on: frozenset[EventKind] = frozenset(),
+    stop_on: Interrupts = frozenset(),
 ) -> StepResult:
     """Apply orders, then run up to `minutes` of game time. Never mutates the input state."""
     if state.pending:
@@ -443,8 +458,7 @@ def step(
         _move(s, hours, out)
         _search(s, rng, out)
         _strikes(s, resolver, rng, out)
-        new_kinds = {e.kind for e in out[before:]}
-        if s.pending or new_kinds & stop_on:
+        if s.pending or _should_stop(out[before:], stop_on):
             return StepResult(state=s, events=out, interrupted=True)
     return StepResult(state=s, events=out, interrupted=False)
 
@@ -455,10 +469,27 @@ def advance(
     *,
     resolver: Resolver,
     max_minutes: int = 24 * 60,
-    stop_on: frozenset[EventKind] = DEFAULT_INTERRUPTS,
+    stop_on: Interrupts = DEFAULT_INTERRUPTS,
 ) -> StepResult:
-    """Speed-up: run quiet time until something happens that a player should react to."""
+    """Speed-up: run quiet time until something happens that a player should react to.
+
+    `stop_on` is one set of kinds (solo, umpire) or a set per side (two-player): an event stops
+    the clock only if a side that can see it has listed its kind.
+    """
     return step(state, orders, minutes=max_minutes, resolver=resolver, stop_on=stop_on)
+
+
+def _check_result(e: Engagement, r: EngagementResult) -> None:
+    problems: list[str] = []
+    names = {sh.name for sh in e.ships}
+    problems += [f"ship {n!r} not in engagement" for n in r.ship_damage if n not in names]
+    problems += [f"ship {n!r}: negative damage" for n, d in r.ship_damage.items() if d < 0]
+    for label, losses, flown in (("attacker", r.attacker_losses, e.attackers), ("CAP", r.cap_losses, e.defender_cap)):
+        for k, n in losses.items():
+            if n < 0 or n > flown.get(k, 0):
+                problems.append(f"{label} losses {k}={n}, but {flown.get(k, 0)} flew")
+    if problems:
+        raise EngineError("tabletop result rejected: " + "; ".join(problems))
 
 
 def resolve_pending(state: GameState, engagement_id: str, result: EngagementResult) -> StepResult:
@@ -467,6 +498,7 @@ def resolve_pending(state: GameState, engagement_id: str, result: EngagementResu
     e = next((e for e in s.pending if e.id == engagement_id), None)
     if e is None:
         raise EngineError(f"{engagement_id}: no pending engagement")
+    _check_result(e, result)
     s.pending.remove(e)
     out: list[Event] = []
     _apply_result(s, e, result, out)

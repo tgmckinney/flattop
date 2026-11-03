@@ -2,7 +2,7 @@ from datetime import datetime
 
 import pytest
 
-from flattop.engine import DEFAULT_INTERRUPTS, EngineError, advance, resolve_pending, step
+from flattop.engine import DEFAULT_INTERRUPTS, EngineError, advance, resolve_pending, step, two_player_interrupts
 from flattop.geo import Pos, destination, distance_nm
 from flattop.model import EngagementResult, GameState, Side
 from flattop.orders import CapOrder, OrderError, Orders, SearchOrder, StrikeOrder
@@ -136,7 +136,7 @@ def test_strike_out_of_range_rejected(s0):
     cid = kb_contact(s)
     s.tf("KB").pos = destination(s.tf("TF16").pos, 0, 150)  # truth irrelevant; contact drives the check
     far = s.model_copy(deep=True)
-    far.contacts[0].reported_pos = destination(far.tf("TF16").pos, 0, 400)
+    next(c for c in far.contacts if c.id == cid).reported_pos = destination(far.tf("TF16").pos, 0, 400)
     with pytest.raises(OrderError, match="strike radius"):
         step(far, {US: Orders(strikes=[StrikeOrder(source_id="TF16", contact_id=cid, aircraft={"SBD": 10})])},
              minutes=10, resolver=AUTO)
@@ -164,3 +164,27 @@ def test_tabletop_pauses_and_resumes(s0):
 
 def test_default_interrupts_cover_player_decisions():
     assert {"sighting", "attack", "dawn", "dusk"} <= DEFAULT_INTERRUPTS
+
+
+def test_two_player_private_events_do_not_stop_clock(s0):
+    s = staged(s0)
+    o = {US: Orders(searches=[SearchOrder(source_id="TF16", aircraft="SBD", count=8, bearing_from=320, bearing_to=40)])}
+    solo = advance(s, o, resolver=AUTO, max_minutes=150)
+    assert solo.interrupted and solo.events[-1].kind == "sighting"
+    duo = advance(s, o, resolver=AUTO, max_minutes=150, stop_on=two_player_interrupts())
+    assert not duo.interrupted, "an allied-only sighting must not stop the shared clock"
+    assert any(e.kind == "sighting" for e in duo.events)
+
+
+def test_tabletop_result_validated(s0):
+    s = search_north(staged(s0))
+    o = {US: Orders(strikes=[StrikeOrder(source_id="TF16", contact_id=kb_contact(s), aircraft={"SBD": 12})])}
+    r = advance(s, o, resolver=TabletopResolver(), stop_on=frozenset(), max_minutes=8 * 60)
+    eid = r.state.pending[0].id
+    for bad in (
+        EngagementResult(ship_damage={"Shokakku": 2}),
+        EngagementResult(attacker_losses={"SBD": 13}),
+        EngagementResult(attacker_losses={"TBF": 1}),
+    ):
+        with pytest.raises(EngineError, match="rejected"):
+            resolve_pending(r.state, eid, bad)
