@@ -1,0 +1,81 @@
+{
+  "scenario": "Eastern Solomons, 23-25 August 1942 (approximate order of battle and positions)",
+  "seed": 1942,
+  "time": "1942-08-23T04:00:00",
+  "end": "1942-08-25T23:50:00",
+  "tick_minutes": 10,
+  "daylight": {"sunrise": "06:10:00", "sunset": "18:20:00"},
+  "aircraft_types": {
+    "F4F": {"key": "F4F", "name": "F4F Wildcat", "role": "fighter", "speed_kn": 160, "strike_radius_nm": 175, "air_combat": 1.0},
+    "SBD": {"key": "SBD", "name": "SBD Dauntless", "role": "dive", "speed_kn": 150, "strike_radius_nm": 200, "search_radius_nm": 250, "hit_prob": 0.22, "damage": 1},
+    "TBF": {"key": "TBF", "name": "TBF Avenger", "role": "torpedo", "speed_kn": 145, "strike_radius_nm": 200, "search_radius_nm": 250, "hit_prob": 0.12, "damage": 2},
+    "SOC": {"key": "SOC", "name": "SOC Seagull", "role": "search", "speed_kn": 110, "search_radius_nm": 150},
+    "PBY": {"key": "PBY", "name": "PBY Catalina", "role": "search", "speed_kn": 110, "search_radius_nm": 600},
+    "B17": {"key": "B17", "name": "B-17 Flying Fortress", "role": "level", "speed_kn": 170, "strike_radius_nm": 800, "search_radius_nm": 800, "hit_prob": 0.03, "damage": 1},
+    "A6M": {"key": "A6M", "name": "A6M Zero", "role": "fighter", "speed_kn": 180, "strike_radius_nm": 250, "air_combat": 1.25},
+    "D3A": {"key": "D3A", "name": "D3A Val", "role": "dive", "speed_kn": 160, "strike_radius_nm": 250, "search_radius_nm": 250, "hit_prob": 0.22, "damage": 1},
+    "B5N": {"key": "B5N", "name": "B5N Kate", "role": "torpedo", "speed_kn": 160, "strike_radius_nm": 250, "search_radius_nm": 300, "hit_prob": 0.15, "damage": 2},
+    "E13A": {"key": "E13A", "name": "E13A Jake", "role": "search", "speed_kn": 120, "search_radius_nm": 300},
+    "H6K": {"key": "H6K", "name": "H6K Mavis", "role": "search", "speed_kn": 120, "search_radius_nm": 600},
+    "G4M": {"key": "G4M", "name": "G4M Betty", "role": "level", "speed_kn": 170, "strike_radius_nm": 600, "hit_prob": 0.04, "damage": 1}
+  },
+  "task_forces": [
+    {
+      "id": "TF11", "side": "allied", "name": "TF 11 (Saratoga)",
+      "pos": {"lat": -10.3, "lon": 162.9}, "speed_kn": 12, "waypoint": {"lat": -9.6, "lon": 162.5},
+      "ships": [
+        {"name": "Saratoga", "type": "CV"}, {"name": "Minneapolis", "type": "CA"}, {"name": "New Orleans", "type": "CA"},
+        {"name": "Phelps", "type": "DD"}, {"name": "Farragut", "type": "DD"}, {"name": "Worden", "type": "DD"},
+        {"name": "Macdonough", "type": "DD"}, {"name": "Dale", "type": "DD"}
+      ],
+      "air": {"F4F": 28, "SBD": 32, "TBF": 13, "SOC": 4}
+    },
+    {
+      "id": "TF16", "side": "allied", "name": "TF 16 (Enterprise)",
+      "pos": {"lat": -10.2, "lon": 163.1}, "speed_kn": 12, "waypoint": {"lat": -9.5, "lon": 162.7},
+      "ships": [
+        {"name": "Enterprise", "type": "CV"}, {"name": "North Carolina", "type": "BB"}, {"name": "Portland", "type": "CA"},
+        {"name": "Atlanta", "type": "CL"}, {"name": "Balch", "type": "DD"}, {"name": "Benham", "type": "DD"},
+        {"name": "Maury", "type": "DD"}, {"name": "Ellet", "type": "DD"}, {"name": "Grayson", "type": "DD"},
+        {"name": "Monssen", "type": "DD"}
+      ],
+      "air": {"F4F": 29, "SBD": 36, "TBF": 15, "SOC": 5}
+    },
+    {
+      "id": "KB", "side": "japan", "name": "Kido Butai (Shokaku, Zuikaku)",
+      "pos": {"lat": -5.0, "lon": 162.8}, "speed_kn": 14, "waypoint": {"lat": -7.0, "lon": 162.4},
+      "ships": [
+        {"name": "Shokaku", "type": "CV"}, {"name": "Zuikaku", "type": "CV"}, {"name": "Kumano", "type": "CA"},
+        {"name": "Suzuya", "type": "CA"}, {"name": "Akigumo", "type": "DD"}, {"name": "Yugumo", "type": "DD"},
+        {"name": "Makigumo", "type": "DD"}, {"name": "Kazagumo", "type": "DD"}, {"name": "Hatsukaze", "type": "DD"},
+        {"name": "Akizuki", "type": "DD"}
+      ],
+      "air": {"A6M": 51, "D3A": 54, "B5N": 36, "E13A": 4}
+    },
+    {
+      "id": "RYU", "side": "japan", "name": "Detached group (Ryujo)",
+      "pos": {"lat": -5.5, "lon": 161.6}, "speed_kn": 16, "waypoint": {"lat": -7.5, "lon": 161.2},
+      "ships": [
+        {"name": "Ryujo", "type": "CVL"}, {"name": "Tone", "type": "CA"},
+        {"name": "Amatsukaze", "type": "DD"}, {"name": "Tokitsukaze", "type": "DD"}
+      ],
+      "air": {"A6M": 24, "B5N": 9, "E13A": 3}
+    },
+    {
+      "id": "TAN", "side": "japan", "name": "Reinforcement group (Jintsu)",
+      "pos": {"lat": -6.5, "lon": 158.5}, "speed_kn": 9, "waypoint": {"lat": -9.3, "lon": 160.0},
+      "ships": [
+        {"name": "Jintsu", "type": "CL"}, {"name": "Kagero", "type": "DD"}, {"name": "Kawakaze", "type": "DD"},
+        {"name": "Suzukaze", "type": "DD"}, {"name": "Kinryu Maru", "type": "AP"},
+        {"name": "Boston Maru", "type": "AP"}, {"name": "Daifuku Maru", "type": "AP"}
+      ]
+    }
+  ],
+  "airbases": [
+    {"id": "HEN", "side": "allied", "name": "Henderson Field", "pos": {"lat": -9.43, "lon": 160.05}, "air": {"F4F": 14, "SBD": 12}},
+    {"id": "NDE", "side": "allied", "name": "Ndeni", "pos": {"lat": -10.7, "lon": 165.8}, "air": {"PBY": 9}},
+    {"id": "ESP", "side": "allied", "name": "Espiritu Santo", "pos": {"lat": -15.5, "lon": 167.2}, "air": {"PBY": 6, "B17": 10}},
+    {"id": "RAB", "side": "japan", "name": "Rabaul", "pos": {"lat": -4.2, "lon": 152.2}, "air": {"A6M": 15, "G4M": 24}},
+    {"id": "SHO", "side": "japan", "name": "Shortland", "pos": {"lat": -7.05, "lon": 155.85}, "air": {"H6K": 6}}
+  ]
+}
