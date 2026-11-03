@@ -8,7 +8,7 @@ from pydantic import BaseModel
 
 from flattop.contacts import age_hours, estimate
 from flattop.geo import Pos
-from flattop.model import Airbase, Event, GameState, SearchMission, Side, StrikeMission, TaskForce
+from flattop.model import Airbase, AircraftType, Event, GameState, SearchMission, Side, StrikeMission, TaskForce
 
 
 class ContactView(BaseModel):
@@ -35,6 +35,7 @@ class SideView(BaseModel):
     strikes: list[StrikeMission]
     awaiting_umpire: bool
     log: list[Event]
+    aircraft_types: dict[str, AircraftType]  # public reference data, both sides
 
 
 def view(state: GameState, side: Side) -> SideView:
@@ -62,4 +63,5 @@ def view(state: GameState, side: Side) -> SideView:
         strikes=[m.model_copy(deep=True) for m in state.strikes if m.side is side],
         awaiting_umpire=bool(state.pending),
         log=[e for e in state.log if side in e.visible_to],
+        aircraft_types=state.aircraft_types,
     )

@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Flattop</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect x='3' y='3' width='10' height='10' transform='rotate(45 8 8)' fill='%23e8c15a'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>Flattop</h1>
+  <div id="clock"></div>
+  <div id="status"></div>
+</header>
+<main id="setup" hidden>
+  <form id="new-game">
+    <h2>New game</h2>
+    <label>Scenario <select name="scenario"></select></label>
+    <label>Mode
+      <select name="mode">
+        <option value="solo">Solo</option>
+        <option value="umpire">Two players + umpire</option>
+        <option value="two_player">Two players</option>
+      </select>
+    </label>
+    <label data-for="solo">Your side
+      <select name="solo_side"><option value="allied">Allied</option><option value="japan">Japan</option></select>
+    </label>
+    <label>Battles
+      <select name="resolver"><option value="auto">Auto-resolve</option><option value="tabletop">Tabletop (enter results)</option></select>
+    </label>
+    <label>Phase length (minutes) <input name="phase_minutes" type="number" value="60" min="10" max="1440" step="10"></label>
+    <button>Create game</button>
+    <div id="seat-links"></div>
+  </form>
+</main>
+<main id="game" hidden>
+  <div id="map"></div>
+  <aside id="panel"></aside>
+</main>
+<div id="toast" hidden></div>
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script src="https://unpkg.com/topojson-client@3.1.0/dist/topojson-client.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

@@ -168,3 +168,9 @@ def test_simultaneous_final_submissions_resolve_once(db):
     for seats in games:
         assert store.seat(seats["umpire"])[3].phase == 2
         assert [a["kind"] for a in store.actions(seats["umpire"])].count("advance") == 1
+
+
+def test_serves_map_page(api):
+    r = api.get("/")
+    assert r.status_code == 200 and "maplibre-gl" in r.text
+    assert api.get("/app.js").status_code == 200

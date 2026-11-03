@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from flattop.model import Engagement, EngagementResult, GameState, Side
@@ -94,6 +96,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
     def actions(token: str) -> list[dict]:
         return store.actions(token)
 
+    app.mount("/", StaticFiles(directory=Path(__file__).parent / "web", html=True), name="web")
     return app
 
 
