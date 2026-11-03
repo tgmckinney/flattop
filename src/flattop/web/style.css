@@ -1,0 +1,65 @@
+:root {
+  --sea: #0e2233; --land: #3b4a3a; --grid: #1f3a52; --ink: #e6e1d3; --dim: #9aa6b2; --line: #2a4560;
+  --panel: #13283b; --allied: #5aa9e6; --japan: #e0645c; --accent: #e8c15a; --bad: #ff8a80;
+  font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--ink);
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--sea); }
+body { display: flex; flex-direction: column; }
+header { display: flex; gap: 24px; align-items: baseline; padding: 8px 16px; background: #0a1a28; border-bottom: 1px solid var(--line); }
+header h1 { font-size: 18px; margin: 0; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); }
+#clock { font: 600 16px ui-monospace, Menlo, monospace; }
+#status { color: var(--dim); margin-left: auto; }
+main { flex: 1; min-height: 0; }
+#game { display: flex; }
+#game[hidden], #setup[hidden] { display: none; }
+#map { flex: 1; min-width: 0; }
+aside { width: 380px; overflow-y: auto; background: var(--panel); border-left: 1px solid var(--line); padding: 12px 14px 40px; }
+section { border-bottom: 1px solid var(--line); padding: 10px 0; }
+h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--dim); margin: 0 0 6px; }
+h3 { font-size: 15px; margin: 0 0 4px; }
+button { background: #24476a; color: var(--ink); border: 1px solid #3a6690; border-radius: 4px; padding: 5px 10px; cursor: pointer; font: inherit; }
+button:hover { background: #2d5880; }
+button.primary { background: var(--accent); color: #1a1a1a; border-color: var(--accent); font-weight: 600; }
+button.active { outline: 2px solid var(--accent); }
+button.x { padding: 0 6px; background: none; border: none; color: var(--dim); }
+button:disabled { opacity: .5; cursor: default; }
+input, select { background: #0c1d2c; color: var(--ink); border: 1px solid var(--line); border-radius: 4px; padding: 3px 6px; font: inherit; }
+input[type=number] { width: 64px; }
+label { display: block; margin: 4px 0; }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 4px 0; }
+.muted { color: var(--dim); }
+.small { font-size: 12px; }
+.list { list-style: none; margin: 0; padding: 0; }
+.list li { padding: 3px 0; display: flex; gap: 6px; align-items: baseline; }
+.list li.click { cursor: pointer; }
+.list li.click:hover { color: var(--accent); }
+.allied { color: var(--allied); } .japan { color: var(--japan); }
+.hit { color: var(--bad); }
+.log li { display: block; font-size: 12px; }
+.log time { color: var(--dim); font-family: ui-monospace, Menlo, monospace; margin-right: 6px; }
+pre { white-space: pre-wrap; font-size: 12px; background: #0c1d2c; padding: 8px; border-radius: 4px; }
+#setup { display: grid; place-items: start center; padding: 32px 16px; overflow-y: auto; }
+#new-game { width: min(420px, 100%); background: var(--panel); padding: 16px 20px; border: 1px solid var(--line); border-radius: 6px; }
+#new-game label { display: flex; justify-content: space-between; align-items: center; margin: 10px 0; }
+#seat-links a { color: var(--accent); word-break: break-all; }
+#toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: #5a1f1f; color: #fff; padding: 8px 14px; border-radius: 4px; max-width: 80vw; }
+
+.unit { width: 14px; height: 14px; border: 2px solid #fff; cursor: pointer; transform: rotate(45deg); }
+.unit.base { transform: none; border-radius: 2px; }
+.unit.allied { background: var(--allied); } .unit.japan { background: var(--japan); }
+.unit.sel { box-shadow: 0 0 0 3px var(--accent); }
+.unit.sunk { opacity: .35; }
+.contact { width: 12px; height: 12px; border-radius: 50%; border: 2px dashed currentColor; cursor: pointer; }
+.tag { position: absolute; left: 18px; top: -4px; white-space: nowrap; font-size: 11px; color: var(--ink); text-shadow: 0 0 3px #000, 0 0 3px #000; pointer-events: none; transform: rotate(0); }
+.unit .tag { transform: rotate(-45deg); left: 14px; top: -14px; }
+.unit.base .tag { transform: none; left: 16px; top: -3px; }
+.maplibregl-canvas.picking { cursor: crosshair; }
+
+@media (max-width: 760px) {
+  #game { flex-direction: column; }
+  #map { height: 55vh; flex: none; }
+  aside { width: 100%; border-left: none; }
+  header { flex-wrap: wrap; gap: 8px 16px; }
+}
+.ships { margin: 4px 0 6px; }

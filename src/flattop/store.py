@@ -90,6 +90,7 @@ class SeatStatus(BaseModel):
     mode: Mode
     resolver: str
     phase: int
+    phase_minutes: int
     must_submit: list[Role]
     submitted: list[Role]
     awaiting_umpire: bool
@@ -185,7 +186,7 @@ class Store:
                 )
             ]
         status = SeatStatus(
-            game_id=game_id, role=role, mode=cfg.mode, resolver=cfg.resolver, phase=phase,
+            game_id=game_id, role=role, mode=cfg.mode, resolver=cfg.resolver, phase=phase, phase_minutes=cfg.phase_minutes,
             must_submit=self.must_submit(cfg), submitted=submitted, awaiting_umpire=bool(state.pending),
             can_resolve=self.can_resolve(cfg, role), finished=state.time >= state.end,
         )

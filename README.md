@@ -15,11 +15,12 @@ WW2 Pacific carrier campaign aid. The engine runs in phases, with simultaneous o
 | `scenarios/` | Scenario JSON (Eastern Solomons, approximate) |
 | `store.py` | SQLite sessions: seats, phase submissions, append-only action log |
 | `server.py` | FastAPI app; a seat token is the only credential |
+| `web/` | Plotting-table page (MapLibre, no build step); open `/?seat=<token>` |
 
 ## Server
 
 ```sh
-FLATTOP_DB=flattop.db uv run flattop-server   # http://127.0.0.1:8000/docs
+FLATTOP_DB=flattop.db uv run flattop-server   # map: http://127.0.0.1:8000/  API: /docs
 ```
 
 | Mode | Seats | Clock runs when | Tabletop results entered by |
