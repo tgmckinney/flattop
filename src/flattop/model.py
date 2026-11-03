@@ -210,12 +210,15 @@ class GameState(BaseModel):
     strikes: list[StrikeMission] = Field(default_factory=list)
     pending: list[Engagement] = Field(default_factory=list)
     log: list[Event] = Field(default_factory=list)
-    next_id: int = 1
+    # Per-side counters: a shared counter would let a player infer enemy activity from gaps in their own ids.
+    next_id: dict[str, int] = Field(default_factory=dict)
 
-    def new_id(self, prefix: str) -> str:
-        i = self.next_id
-        self.next_id += 1
-        return f"{prefix}{i}"
+    def new_id(self, prefix: str, side: Side | None = None) -> str:
+        """`side=None` is for umpire-only objects (engagements)."""
+        key = side.value if side else "umpire"
+        i = self.next_id.get(key, 0) + 1
+        self.next_id[key] = i
+        return f"{key[0].upper()}-{prefix}{i}"
 
     def is_day(self, t: datetime | None = None) -> bool:
         tod = (t or self.time).time()

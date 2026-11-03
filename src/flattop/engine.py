@@ -201,7 +201,7 @@ def _apply_search(state: GameState, side: Side, o: SearchOrder, out: list[Event]
     radius = min(o.radius_nm or at.search_radius_nm, at.search_radius_nm)
     u.air[o.aircraft] -= o.count
     m = SearchMission(
-        id=state.new_id("S"), side=side, source_id=u.id, aircraft=o.aircraft, count=o.count,
+        id=state.new_id("S", side), side=side, source_id=u.id, aircraft=o.aircraft, count=o.count,
         origin=u.pos, bearing_from=o.bearing_from, bearing_to=o.bearing_to, radius_nm=radius,
         launched_at=state.time,
     )
@@ -238,7 +238,7 @@ def _apply_strike(state: GameState, side: Side, o: StrikeOrder, out: list[Event]
     for k, n in aircraft.items():
         u.air[k] -= n
     m = StrikeMission(
-        id=state.new_id("K"), side=side, source_id=u.id, contact_id=c.id, aircraft=aircraft, aim=aim,
+        id=state.new_id("K", side), side=side, source_id=u.id, contact_id=c.id, aircraft=aircraft, aim=aim,
         launched_at=state.time, arrive_at=_ceil_tick(state, state.time + timedelta(hours=distance_nm(u.pos, aim) / speed)),
     )
     state.strikes.append(m)
@@ -292,7 +292,7 @@ def _report(state: GameState, m: SearchMission, tf: TaskForce, rng: random.Rando
     desc = _describe(tf, rng)
     c = next((c for c in state.contacts if c.side is m.side and c.target_id == tf.id), None)
     if c is None:
-        c = Contact(id=state.new_id("C"), side=m.side, target_id=tf.id, reported_at=state.time,
+        c = Contact(id=state.new_id("C", m.side), side=m.side, target_id=tf.id, reported_at=state.time,
                     reported_pos=pos, reported_course=course, reported_speed_kn=speed, error_nm=err,
                     description=desc)
         state.contacts.append(c)
