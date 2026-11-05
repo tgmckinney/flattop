@@ -4,7 +4,9 @@ Doctrine, kept deliberately simple:
 - Carriers hold a third of their fighters on CAP.
 - With no fresh carrier contact, each unit keeps one search aloft, aimed at its best guess of the enemy.
 - With a fresh contact in range, launch every bomber that can reach it, escorted by half the free fighters.
-- Ships follow the scenario's waypoints.
+- Carrier groups close on a known enemy carrier until it is inside strike range (by day, and overnight to
+  open the next morning at about strike range), and retire away from the enemy once half their decks are out.
+- Groups without carriers follow the scenario's waypoints.
 """
 
 from __future__ import annotations
@@ -12,9 +14,9 @@ from __future__ import annotations
 from datetime import datetime
 
 from flattop.contacts import intercept
-from flattop.geo import bearing_deg, distance_nm
+from flattop.geo import bearing_deg, destination, distance_nm
 from flattop.model import Airbase, AircraftType, EventKind, TaskForce
-from flattop.orders import CapOrder, Orders, SearchOrder, StrikeOrder
+from flattop.orders import CapOrder, MoveOrder, Orders, SearchOrder, StrikeOrder
 from flattop.view import ContactView, SideView
 
 # Events that make the bot re-plan mid-run. They never stop the player's clock (see `Store.interrupts`).
@@ -26,6 +28,10 @@ RANGE_MARGIN = 0.95  # stay inside the strike radius; contacts drift
 MIN_STRIKE = 6  # do not dribble out penny packets
 SEARCH_SHARE = 0.25  # of scout-bombers, when no dedicated search aircraft are aboard
 SEARCH_DEG_PER_PLANE = 10
+DASH_KN = 24
+CLOSE_TO = 0.8  # of strike radius: where a closing carrier group aims to sit
+NIGHT_MEMORY_MINUTES = 12 * 60  # how old a carrier report may be and still be worth closing on overnight
+RETIRE_NM = 300
 
 Unit = TaskForce | Airbase
 BOMBER_ROLES = ("dive", "torpedo", "level")
@@ -84,6 +90,40 @@ def _strike(u: Unit, c: ContactView, free_fighters: dict[str, int], types: dict[
     return StrikeOrder(source_id=u.id, contact_id=c.id, aircraft={**bombers, **{k: n for k, n in escort.items() if n}})
 
 
+def _carriers(tf: TaskForce) -> tuple[int, int]:
+    """(carrier decks we started with, decks still working)."""
+    cv = [s for s in tf.ships if s.type in ("CV", "CVL")]
+    return len(cv), sum(1 for s in cv if not s.sunk and not s.deck_out)
+
+
+def _move(tf: TaskForce, v: SideView, types: dict[str, AircraftType]) -> MoveOrder | None:
+    total, working = _carriers(tf)
+    if not total:
+        return None
+    if working * 2 < total:  # retire: away from the nearest known enemy, else toward the nearest friendly field
+        if v.contacts:
+            c = min(v.contacts, key=lambda c: distance_nm(tf.pos, c.estimated_pos))
+            away = (bearing_deg(c.estimated_pos, tf.pos)) % 360
+        elif v.airbases:
+            away = bearing_deg(tf.pos, min(v.airbases, key=lambda b: distance_nm(tf.pos, b.pos)).pos)
+        else:
+            return None
+        return MoveOrder(tf_id=tf.id, waypoint=destination(tf.pos, away, RETIRE_NM), speed_kn=DASH_KN)
+    reach = max((types[k].strike_radius_nm for k, n in tf.air.items()
+                 if n > 0 and types[k].role in BOMBER_ROLES), default=0)
+    memory = FRESH_MINUTES if v.is_day else NIGHT_MEMORY_MINUTES
+    carriers = [c for c in v.contacts if "carrier" in c.description and c.age_minutes <= memory]
+    if not reach or not carriers:
+        return None
+    c = min(carriers, key=lambda c: distance_nm(tf.pos, c.estimated_pos))
+    d = distance_nm(tf.pos, c.estimated_pos)
+    if d <= reach * RANGE_MARGIN:
+        return None  # in range: hold course for the strike and its recovery
+    stand_off = reach * CLOSE_TO
+    goal = destination(tf.pos, bearing_deg(tf.pos, c.estimated_pos), d - stand_off)
+    return MoveOrder(tf_id=tf.id, waypoint=goal, speed_kn=DASH_KN)
+
+
 def bot_orders(v: SideView) -> Orders:
     o = Orders()
     types = v.aircraft_types
@@ -96,6 +136,9 @@ def bot_orders(v: SideView) -> Orders:
     targets = sorted((c for c in v.contacts if c.age_minutes <= FRESH_MINUTES
                       and (c.id not in last_struck or c.reported_at > last_struck[c.id])), key=_score, reverse=True)
     carrier_known = any("carrier" in c.description for c in targets)  # a spent report sends the scouts out again
+    for tf in v.task_forces:
+        if (m := _move(tf, v, types)) is not None:
+            o.moves.append(m)
     for u in [*v.task_forces, *v.airbases]:
         if not u.can_operate_aircraft:
             continue

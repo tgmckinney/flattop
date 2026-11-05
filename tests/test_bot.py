@@ -1,10 +1,11 @@
 import sqlite3
 
+import pytest
 from test_engine import AUTO, JP, US, staged
 
 from flattop.bot import bot_orders
 from flattop.engine import DEFAULT_INTERRUPTS, apply_orders, step
-from flattop.geo import destination
+from flattop.geo import destination, distance_nm
 from flattop.model import GameState
 from flattop.orders import Orders
 from flattop.scenario import load_scenario
@@ -88,3 +89,35 @@ def test_solo_run_bot_acts_without_leaking_its_timing(tmp_path):
     with sqlite3.connect(db) as c:
         bot = c.execute("SELECT count(*) FROM actions WHERE kind = 'bot'").fetchone()[0]
     assert bot > 6, "the bot should re-plan mid-run, not only at submissions"
+
+
+def _with_carrier_contact(s: GameState) -> GameState:
+    from flattop.model import Contact
+
+    tf16 = s.tf("TF16")
+    s.contacts.append(Contact(id="J-C1", side=JP, target_id="TF16", reported_at=s.time, reported_pos=tf16.pos,
+                              reported_course=0, reported_speed_kn=0, error_nm=5, description="1 carrier, 9 warships"))
+    return s
+
+
+def _kb_move(s: GameState):
+    return next(m for m in bot_orders(view(s, JP)).moves if m.tf_id == "KB")
+
+
+def test_bot_closes_on_a_carrier_out_of_range():
+    s = _with_carrier_contact(staged(load_scenario("eastern_solomons"), dist_nm=400))
+    m = _kb_move(s)
+    tf16 = s.tf("TF16").pos
+    assert m.speed_kn > 20
+    assert distance_nm(m.waypoint, tf16) == pytest.approx(0.8 * 250, abs=5)  # stand off at 80% of D3A/B5N radius
+
+
+def test_bot_holds_when_in_range_and_retires_when_decks_are_out():
+    s = _with_carrier_contact(staged(load_scenario("eastern_solomons"), dist_nm=150))
+    assert not [m for m in bot_orders(view(s, JP)).moves if m.tf_id == "KB"]
+    for ship in s.tf("KB").ships:
+        if ship.type == "CV":
+            ship.damage = 2  # flight decks out
+    m = _kb_move(s)
+    kb, tf16 = s.tf("KB").pos, s.tf("TF16").pos
+    assert distance_nm(m.waypoint, tf16) > distance_nm(kb, tf16) + 250, "should run away from the enemy carrier"
