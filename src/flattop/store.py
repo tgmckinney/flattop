@@ -18,6 +18,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from flattop.bot import WAKE_ON as BOT_WAKE_ON
+from flattop.bot import bot_orders
 from flattop.engine import (
     DEFAULT_INTERRUPTS,
     EngineError,
@@ -29,9 +31,10 @@ from flattop.engine import (
     two_player_interrupts,
 )
 from flattop.model import EngagementResult, GameState, Side
-from flattop.orders import Orders
+from flattop.orders import OrderError, Orders
 from flattop.resolve import AutoResolver, Resolver, TabletopResolver
 from flattop.scenario import load_scenario
+from flattop.view import view
 
 RUN_MAX_MINUTES = 24 * 60
 
@@ -67,7 +70,7 @@ CREATE TABLE IF NOT EXISTS actions (
 
 
 class Mode(StrEnum):
-    SOLO = "solo"  # one player; the other side stands still until a bot exists
+    SOLO = "solo"  # one player; `flattop.bot` commands the other side from its own view
     UMPIRE = "umpire"  # two players plus an umpire who sees everything and resolves tabletop battles
     TWO_PLAYER = "two_player"  # two players, no umpire; auto-resolve only
 
@@ -157,8 +160,12 @@ class Store:
 
     @staticmethod
     def interrupts(cfg: GameConfig) -> Interrupts:
-        # With two hidden players, only events both can see may stop the shared clock (no timing leaks).
-        return DEFAULT_INTERRUPTS if cfg.mode is Mode.SOLO else two_player_interrupts()
+        # Only events a player can see may stop their clock: anything else would leak through timing.
+        # Two hidden players share a clock, so only public events stop it. In solo the bot's private
+        # events also stop the engine, but `_run` re-plans and carries on without returning to the player.
+        if cfg.mode is Mode.SOLO:
+            return {cfg.solo_side: DEFAULT_INTERRUPTS, cfg.solo_side.enemy: BOT_WAKE_ON}
+        return two_player_interrupts()
 
     @staticmethod
     def resolver(cfg: GameConfig) -> Resolver:
@@ -289,7 +296,21 @@ class Store:
         orders = {Side(r["role"]): Orders.model_validate_json(r["orders_json"]) for r in rows}
         wanted = [forced] if forced else [r["advance"] for r in rows]
         minutes = cfg.phase_minutes if "phase" in wanted else RUN_MAX_MINUTES  # the more cautious side wins
-        res = step(state, orders, minutes=minutes, resolver=self.resolver(cfg), stop_on=self.interrupts(cfg))
+        solo = cfg.mode is Mode.SOLO
+        remaining, start = minutes, state.time
+        while True:
+            if solo:
+                enemy = cfg.solo_side.enemy
+                orders[enemy] = _keep_valid(state, enemy, bot_orders(view(state, enemy)))
+                self._log(c, game_id, enemy.value, "bot", {"phase": phase, "at": state.time.isoformat(),
+                                                           "orders": orders[enemy].model_dump(mode="json")})
+            res = step(state, orders, minutes=remaining, resolver=self.resolver(cfg), stop_on=self.interrupts(cfg))
+            remaining -= int((res.state.time - state.time).total_seconds() // 60)
+            state, orders = res.state, {}  # the player's orders are consumed by the first step
+            if not (solo and res.interrupted and not state.pending and remaining > 0
+                    and not _player_should_stop(state, cfg.solo_side)):
+                break
+        res = StepResult(state=state, events=[e for e in state.log if e.time > start], interrupted=res.interrupted)
         self._save(c, game_id, phase + 1, res)
         self._log(c, game_id, role, "advance", {"phase": phase, "minutes": minutes, "to": res.state.time.isoformat(),
                                                 "interrupted": res.interrupted})
@@ -304,3 +325,27 @@ class Store:
         c.execute("INSERT INTO actions (game_id, at, role, kind, payload_json) VALUES (?, ?, ?, ?, ?)",
                   (game_id, _now(), role, kind, json.dumps(payload)))
 
+
+
+def _keep_valid(state: GameState, side: Side, orders: Orders) -> Orders:
+    """Drop any bot order the engine would reject, rather than stall the game on it."""
+    scratch = state.model_copy(deep=True)
+    kept = Orders()
+    for field in ("moves", "cap", "searches", "strikes"):
+        for o in getattr(orders, field):
+            try:
+                apply_orders(scratch, side, Orders(**{field: [o]}), [])
+            except OrderError:
+                continue
+            getattr(kept, field).append(o)
+    return kept
+
+
+def _player_should_stop(state: GameState, side: Side) -> bool:
+    """Did the tick that just ended produce something this player sees and asked to stop for?"""
+    for e in reversed(state.log):
+        if e.time != state.time:
+            return False
+        if side in e.visible_to and e.kind in DEFAULT_INTERRUPTS:
+            return True
+    return False

@@ -78,8 +78,9 @@ Unit = TaskForce | Airbase
 # --- helpers -----------------------------------------------------------------------------------
 
 
-def _emit(state: GameState, out: list[Event], kind: EventKind, text: str, *sides: Side) -> None:
-    ev = Event(time=state.time, kind=kind, visible_to=list(sides), text=text)
+def _emit(state: GameState, out: list[Event], kind: EventKind, text: str, *sides: Side,
+          refs: dict[str, str] | None = None) -> None:
+    ev = Event(time=state.time, kind=kind, visible_to=list(sides), text=text, refs=refs or {})
     state.log.append(ev)
     out.append(ev)
 
@@ -244,7 +245,7 @@ def _apply_strike(state: GameState, side: Side, o: StrikeOrder, out: list[Event]
     state.strikes.append(m)
     _emit(state, out, "strike_launched",
           f"Strike {m.id} launched from {u.name}: {sum(aircraft.values())} aircraft against contact {c.id}, "
-          f"{distance_nm(u.pos, aim):.0f} nm.", side)
+          f"{distance_nm(u.pos, aim):.0f} nm.", side, refs={"strike": m.id, "contact": c.id})
 
 
 def apply_orders(state: GameState, side: Side, orders: Orders, out: list[Event]) -> None:
@@ -302,7 +303,7 @@ def _report(state: GameState, m: SearchMission, tf: TaskForce, rng: random.Rando
     src = state.unit(m.source_id)
     _emit(state, out, "sighting",
           f"Search {m.id} ({src.name if src else '?'}) reports {desc} at {fmt_pos(pos)}, "
-          f"course {course:03.0f}, speed {speed:.0f}. Contact {c.id}.", m.side)
+          f"course {course:03.0f}, speed {speed:.0f}. Contact {c.id}.", m.side, refs={"contact": c.id})
 
 
 def _search(state: GameState, rng: random.Random, out: list[Event]) -> None:
@@ -409,7 +410,7 @@ def _apply_result(state: GameState, e: Engagement, r: EngagementResult, out: lis
           f"CAP lost {lost_cap}; claimed {lost_att} attackers.", defender)
     _emit(state, out, "attack",
           f"Strike {m.id} attacked an enemy group at {fmt_pos(e.pos)}: "
-          f"{len(hit) + len(sunk)} ships seen hit{', a ship seen sinking' if sunk else ''}. "
+          f"{len(hit) + len(sunk)} ship{'' if len(hit) + len(sunk) == 1 else 's'} seen hit{', a ship seen sinking' if sunk else ''}. "
           f"{lost_att} of ours lost.", m.side)
     for name in sunk:
         _emit(state, out, "ship_sunk", f"{name} has sunk.", defender)
