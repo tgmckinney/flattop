@@ -177,6 +177,7 @@ EventKind = Literal[
     "dusk",
     "waypoint",
     "sighting",
+    "snooper",  # your group spotted the enemy scout that found it
     "search_returned",
     "strike_launched",
     "strike_missed",

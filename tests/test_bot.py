@@ -121,3 +121,26 @@ def test_bot_holds_when_in_range_and_retires_when_decks_are_out():
     m = _kb_move(s)
     kb, tf16 = s.tf("KB").pos, s.tf("TF16").pos
     assert distance_nm(m.waypoint, tf16) > distance_nm(kb, tf16) + 250, "should run away from the enemy carrier"
+
+
+def test_snooper_warns_the_found_side_and_steers_bot_searches():
+    from flattop.orders import SearchOrder
+
+    s = staged(load_scenario("eastern_solomons"))
+    us = {US: Orders(searches=[SearchOrder(source_id="TF16", aircraft="SBD", count=8, bearing_from=320, bearing_to=40)])}
+    snoops = []
+    for seed in range(1, 6):  # the spot roll is random; across a few seeds it must happen
+        s2 = s.model_copy(update={"seed": seed}, deep=True)
+        r = step(s2, us, minutes=150, resolver=AUTO)
+        snoops += [(r.state, e) for e in r.events if e.kind == "snooper"]
+    assert snoops, "Kido Butai should spot at least one US scout"
+    state, e = snoops[0]
+    assert e.visible_to == [JP] and "from the south" in e.text
+    assert e in view(state, JP).log and e not in view(state, US).log
+    axis = float(e.refs["bearing"])
+    jp = view(state, JP).model_copy(update={"contacts": []})  # no contacts of its own: the snooper is all it has
+    searches = bot_orders(jp).searches
+    assert searches
+    for o in searches:
+        mid = (o.bearing_from + ((o.bearing_to - o.bearing_from) % 360) / 2) % 360
+        assert abs((mid - axis + 180) % 360 - 180) <= 1
