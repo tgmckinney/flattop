@@ -10,7 +10,7 @@ WW2 Pacific carrier campaign aid. The engine runs in phases, with simultaneous o
 | `orders.py` | Per-phase orders: move, CAP, search, strike |
 | `engine.py` | `step()` (fixed phase), `advance()` (run until something happens), `resolve_pending()` (tabletop result in) |
 | `resolve.py` | `AutoResolver` (seeded) and `TabletopResolver` (pauses for the umpire) |
-| `bot.py` | Solo opponent: reads only its own `SideView`; searches, holds CAP, strikes fresh contacts |
+| `bot.py` | Solo opponent: reads only its own `SideView`; searches, holds CAP, strikes fresh contacts, closes to strike range, retires when crippled |
 | `view.py` | `view(state, side)`: the only thing a player client should receive |
 | `sheet.py` | Markdown engagement sheet for tabletop play |
 | `scenarios/` | Scenario JSON (Eastern Solomons, approximate) |
