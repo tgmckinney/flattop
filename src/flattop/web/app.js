@@ -48,6 +48,15 @@ function bearing(a, b) {
   return (deg(Math.atan2(y, x)) + 360) % 360;
 }
 const ll = (p) => [p.lon, p.lat];
+// Where a strike will meet a moving contact; mirrors the aim in engine._apply_strike.
+function intercept(from, c, aircraft, types) {
+  const ks = Object.entries(aircraft).filter(([, n]) => n > 0).map(([k]) => k);
+  if (!ks.length) return c.estimated_pos;
+  const speed = Math.min(...ks.map((k) => types[k].speed_kn));
+  let aim = c.estimated_pos;
+  for (let i = 0; i < 2; i++) aim = dest(c.estimated_pos, c.reported_course, (c.reported_speed_kn * dist(from, aim)) / speed);
+  return aim;
+}
 function circle(p, nm, n = 72) {
   return Array.from({ length: n + 1 }, (_, i) => ll(dest(p, (i * 360) / n, nm)));
 }
@@ -125,6 +134,7 @@ function initMap() {
     map.addLayer({ id: "areas-line", type: "line", source: "areas", paint: { "line-color": ["get", "color"], "line-width": 1, "line-dasharray": [3, 2] } });
     map.addLayer({ id: "lines", type: "line", source: "lines", paint: { "line-color": ["get", "color"], "line-width": 1.6, "line-dasharray": [4, 3] } });
     map.on("click", onMapClick);
+    map.on("zoomend", declutter);
     try {
       const topo = await (await fetch("https://unpkg.com/world-atlas@2.0.2/land-50m.json")).json();
       map.getSource("land").setData(topojson.feature(topo, topo.objects.land));
@@ -158,7 +168,7 @@ function drawMap() {
   }
   for (const o of S.draft.strikes) {
     const c = S.d.contacts.find((c) => c.id === o.contact_id);
-    if (c) line(unit(o.source_id).pos, c.estimated_pos, acc);
+    if (c) line(unit(o.source_id).pos, intercept(unit(o.source_id).pos, c, o.aircraft, S.d.types), acc);
   }
   const sel = S.selected && unit(S.selected);
   if (sel && S.form.search) {
@@ -173,7 +183,8 @@ function drawMap() {
   const add = (el, p) => S.markers.push(new maplibregl.Marker({ element: el }).setLngLat(ll(p)).addTo(map));
   for (const u of units()) {
     const sunk = isTf(u) && !u.ships.some((s) => !isSunk(s));
-    const el = h("div", { class: `unit ${isTf(u) ? "" : "base"} ${u.side} ${u.id === S.selected ? "sel" : ""} ${sunk ? "sunk" : ""}`, title: u.name },
+    const el = h("div", { class: `mk ${u.id === S.selected ? "sel" : ""} ${sunk ? "sunk" : ""}`, title: u.name },
+      h("div", { class: `sym ${isTf(u) ? "tf" : "base"} ${u.side}` }),
       h("span", { class: "tag" }, isTf(u) ? u.name.replace(/\s*\(.*\)/, "") : u.name));
     el.addEventListener("click", (e) => { e.stopPropagation(); select(u.id); });
     add(el, u.pos);
@@ -181,8 +192,42 @@ function drawMap() {
   for (const c of S.d.contacts) {
     const color = sideColor(enemyOf(c.side ?? S.d.side));
     const label = `${c.id}${c.target_id ? " = " + c.target_id : ""}${c.age_minutes != null ? ` · ${c.age_minutes}m` : ""}`;
-    const el = h("div", { class: "contact", style: `color:${color}`, title: c.description }, h("span", { class: "tag" }, label));
+    const targeted = S.form.strike?.contact_id === c.id && S.selected;
+    const el = h("div", { class: `mk contact ${targeted ? "sel" : ""}`, style: `color:${color}`, title: `${c.description} (click to target)` },
+      h("div", { class: "sym ring" }), h("span", { class: "tag" }, label));
+    el.addEventListener("click", (e) => { e.stopPropagation(); targetContact(c.id); });
     add(el, c.estimated_pos);
+  }
+  for (const m of S.d.strikes) {
+    const when = m.phase === "outbound" ? `over target ${fmtTime(m.arrive_at, false)}` : m.return_at ? `home ${fmtTime(m.return_at, false)}` : "returning";
+    const pos = m.phase === "outbound" ? m.aim : (unit(m.source_id)?.pos ?? m.aim);
+    add(h("div", { class: "mk", style: `color:${sideColor(m.side)}` }, h("div", { class: "sym plane" }, "✈"), h("span", { class: "tag" }, `${m.id} ${when}`)), pos);
+  }
+  declutter();
+}
+
+// Stack labels of markers that sit on top of each other (e.g. two task forces in company).
+function declutter() {
+  const pts = S.markers.map((m) => map.project(m.getLngLat()));
+  S.markers.forEach((m, i) => {
+    const p = pts[i];
+    const n = pts.slice(0, i).filter((q) => Math.abs(q.x - p.x) < 70 && Math.abs(q.y - p.y) < 14).length;
+    // Start the label clear of any symbol sitting just to the right of this one.
+    const push = Math.max(0, ...pts.filter((q) => Math.abs(q.y - p.y) < 16 && q.x > p.x && q.x - p.x < 24).map((q) => q.x - p.x));
+    const tag = m.getElement().querySelector(".tag");
+    if (tag) Object.assign(tag.style, { top: `${-1 + n * 14}px`, left: `${18 + push}px` });
+  });
+}
+
+function targetContact(id) {
+  const c = S.d.contacts.find((c) => c.id === id);
+  const u = S.selected && unit(S.selected);
+  if (u && mine(u) && operational(u)) {
+    S.form.strike = { contact_id: id, aircraft: S.form.strike?.aircraft ?? {} };
+    render();
+  } else if (c) {
+    map.easeTo({ center: ll(c.estimated_pos) });
+    if (S.d.side) toast("Select one of your carriers or airfields first, then click a contact to aim a strike at it.");
   }
 }
 const CAPACITY = { CV: 6, CVL: 3, BB: 9, CA: 4, CL: 3, DD: 2, AP: 2 };
@@ -236,7 +281,7 @@ function render() {
     if (sel && mine(sel)) p.append(unitPanel(sel));
     p.append(forcesPanel());
   }
-  p.append(contactsPanel(), logPanel());
+  p.append(missionsPanel(), contactsPanel(), logPanel());
   drawMap();
 }
 
@@ -291,11 +336,12 @@ function unitPanel(u) {
   if (strikeTypes.length && S.d.contacts.length) {
     const f = (S.form.strike ??= { contact_id: S.d.contacts[0].id, aircraft: {} });
     const c = S.d.contacts.find((c) => c.id === f.contact_id);
-    const range = c ? dist(u.pos, c.estimated_pos) : 0;
+    const aim = c ? intercept(u.pos, c, f.aircraft, S.d.types) : u.pos;
+    const range = dist(u.pos, aim);
     const chosen = Object.entries(f.aircraft).filter(([, n]) => n > 0);
     const reach = chosen.length ? Math.min(...chosen.map(([k]) => S.d.types[k].strike_radius_nm)) : null;
     const rangeNote = h("div", { class: `small ${reach != null && range > reach ? "hit" : "muted"}` },
-      `Target ${range.toFixed(0)} nm, bearing ${bearing(u.pos, c?.estimated_pos ?? u.pos).toFixed(0)}°` + (reach != null ? `; strike radius ${reach} nm` : ""));
+      `${reach != null ? "Intercept" : "Target"} ${range.toFixed(0)} nm, bearing ${bearing(u.pos, aim).toFixed(0)}°` + (reach != null ? `; strike radius ${reach} nm` : ""));
     sec.append(h("h2", { style: "margin-top:10px" }, "Strike"),
       h("div", { class: "row" }, "Target", h("select", { onchange: (e) => { f.contact_id = e.target.value; render(); } },
         S.d.contacts.map((c) => h("option", { value: c.id, selected: c.id === f.contact_id }, `${c.id}: ${c.description}`)))),
@@ -332,11 +378,27 @@ const phaseMinutes = () => S.body.status.phase_minutes ?? 60;
 function contactsPanel() {
   const cs = S.d.contacts;
   return h("section", {}, h("h2", {}, S.d.side ? "Contacts" : "All contacts"),
-    cs.length ? h("ul", { class: "list small" }, cs.map((c) => h("li", { class: "click", onclick: () => map.easeTo({ center: ll(c.estimated_pos) }) },
+    cs.length ? h("ul", { class: "list small" }, cs.map((c) => h("li", { class: "click", onclick: () => targetContact(c.id) },
       h("b", { class: enemyOf(c.side ?? S.d.side) }, c.id),
       h("span", {}, `${c.description}${c.target_id ? ` (${c.target_id})` : ""} · course ${Math.round(c.reported_course)}°, ${Math.round(c.reported_speed_kn)} kn`
         + (c.age_minutes != null ? ` · ${c.age_minutes} min old, ±${Math.round(c.uncertainty_nm)} nm` : "")))))
       : h("div", { class: "muted small" }, "None. Send searches out at dawn."));
+}
+
+function missionsPanel() {
+  const rows = [];
+  for (const m of S.d.searches) {
+    const t = S.d.types[m.aircraft];
+    const back = new Date(Date.parse(m.launched_at + "Z") + (2 * m.radius_nm / t.speed_kn) * 3600e3).toISOString();
+    rows.push([m.side, `${m.id} search`, `${m.count} ${m.aircraft} from ${unit(m.source_id)?.name ?? m.source_id}, ${m.bearing_from}°–${m.bearing_to}°`, `back ~${fmtTime(back, false)}`]);
+  }
+  for (const m of S.d.strikes) {
+    const when = m.phase === "outbound" ? `over target ${fmtTime(m.arrive_at, false)}` : m.return_at ? `lands ${fmtTime(m.return_at, false)}` : "returning";
+    rows.push([m.side, `${m.id} strike`, `${airText(m.aircraft)} from ${unit(m.source_id)?.name ?? m.source_id} at ${m.contact_id}`, when]);
+  }
+  if (!rows.length) return "";
+  return h("section", {}, h("h2", {}, "Aircraft aloft"),
+    h("ul", { class: "list small" }, rows.map(([side, id, what, when]) => h("li", {}, h("b", { class: side }, id), h("span", {}, what), h("span", { class: "eta" }, when)))));
 }
 
 function logPanel() {
