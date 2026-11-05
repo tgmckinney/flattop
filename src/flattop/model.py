@@ -37,14 +37,15 @@ class AircraftType(BaseModel):
 
 
 class ShipClass(BaseModel):
-    capacity: int
+    capacity: int  # damage that sinks her
     flak: float
     deck_out_at: int | None = None  # damage that closes a flight deck
+    hangar: int = 0  # carrier aircraft she can operate (floatplanes on cruisers do not count)
 
 
 SHIP_CLASSES: dict[str, ShipClass] = {
-    "CV": ShipClass(capacity=6, flak=3, deck_out_at=2),
-    "CVL": ShipClass(capacity=3, flak=2, deck_out_at=1),
+    "CV": ShipClass(capacity=6, flak=3, deck_out_at=2, hangar=90),
+    "CVL": ShipClass(capacity=3, flak=2, deck_out_at=1, hangar=37),
     "BB": ShipClass(capacity=9, flak=5),
     "CA": ShipClass(capacity=4, flak=3),
     "CL": ShipClass(capacity=3, flak=3),
@@ -87,6 +88,10 @@ class TaskForce(BaseModel):
     def can_operate_aircraft(self) -> bool:
         return any(s.type in ("CV", "CVL") and not s.deck_out and not s.sunk for s in self.ships)
 
+    @property
+    def hangar(self) -> int:
+        return sum(SHIP_CLASSES[s.type].hangar for s in self.ships if not s.sunk and not s.deck_out)
+
 
 class Airbase(BaseModel):
     id: str
@@ -94,6 +99,7 @@ class Airbase(BaseModel):
     name: str
     pos: Pos
     operational: bool = True
+    hangar: int | None = None  # None: no practical limit
     air: dict[str, int] = Field(default_factory=dict)
     cap: int = 0
 
