@@ -41,9 +41,11 @@ ACQUIRE_NM_DAY = 30.0
 ACQUIRE_NM_NIGHT = 8.0
 MUTUAL_CAP_NM = 25.0
 DIVERT_NM = 200.0
+SNOOPER_SPOTTED_P = 0.6  # chance a found group sees the scout that found it (daylight only)
+COMPASS = ("north", "north-east", "east", "south-east", "south", "south-west", "west", "north-west")
 
 DEFAULT_INTERRUPTS: frozenset[EventKind] = frozenset(
-    {"dawn", "dusk", "waypoint", "sighting", "attack", "engagement_pending"}
+    {"dawn", "dusk", "waypoint", "sighting", "snooper", "attack", "engagement_pending"}
 )
 # Two-player: the clock is shared, so stopping on a private event (one side's sighting) would tell
 # the other side something happened. Only events both sides receive may stop the clock.
@@ -329,6 +331,12 @@ def _report(state: GameState, m: SearchMission, tf: TaskForce, rng: random.Rando
     _emit(state, out, "sighting",
           f"Search {m.id} ({src.name if src else '?'}) reports {desc} at {fmt_pos(pos)}, "
           f"course {course:03.0f}, speed {speed:.0f}. Contact {c.id}.", m.side, refs={"contact": c.id})
+    # Snoopers were often seen. Draw from a separate stream so the finder's luck does not change.
+    if _rng(state, f"snoop:{m.id}:{tf.id}").random() < SNOOPER_SPOTTED_P:
+        came_from = bearing_deg(tf.pos, m.origin)
+        _emit(state, out, "snooper",
+              f"{tf.name} sighted an enemy scout plane, probably from the {COMPASS[round(came_from / 45) % 8]}. "
+              f"Assume we have been reported.", tf.side, refs={"bearing": f"{came_from:.0f}", "tf": tf.id})
 
 
 def _search(state: GameState, rng: random.Random, out: list[Event]) -> None:

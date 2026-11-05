@@ -20,7 +20,10 @@ from flattop.orders import CapOrder, MoveOrder, Orders, SearchOrder, StrikeOrder
 from flattop.view import ContactView, SideView
 
 # Events that make the bot re-plan mid-run. They never stop the player's clock (see `Store.interrupts`).
-WAKE_ON: frozenset[EventKind] = frozenset({"sighting", "strike_recovered", "search_returned", "strike_missed"})
+WAKE_ON: frozenset[EventKind] = frozenset(
+    {"sighting", "snooper", "strike_recovered", "search_returned", "strike_missed"}
+)
+SNOOPER_MEMORY_MINUTES = 180
 FRESH_MINUTES = 180  # older contacts are too vague to strike
 CAP_SHARE = 1 / 3
 ESCORT_SHARE = 0.5
@@ -43,10 +46,15 @@ def _score(c: ContactView) -> float:
 
 
 def _search_axis(u: Unit, v: SideView) -> float:
-    """Best guess at where the enemy is: any contact, else the way we are heading, else rotate by the hour."""
+    """Best guess at where the enemy is: any contact, else where a recent snooper came from,
+    else the way we are heading, else rotate by the hour."""
     if v.contacts:
         c = min(v.contacts, key=lambda c: distance_nm(u.pos, c.estimated_pos))
         return bearing_deg(u.pos, c.estimated_pos)
+    snoops = [e for e in v.log if e.kind == "snooper"
+              and (v.time - e.time).total_seconds() <= SNOOPER_MEMORY_MINUTES * 60]
+    if snoops:
+        return float(snoops[-1].refs["bearing"])
     if isinstance(u, TaskForce) and u.waypoint and distance_nm(u.pos, u.waypoint) > 20:
         return bearing_deg(u.pos, u.waypoint)
     return (v.time.hour * 90) % 360
