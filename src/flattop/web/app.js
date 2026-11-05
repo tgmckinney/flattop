@@ -232,6 +232,11 @@ function targetContact(id) {
 }
 const CAPACITY = { CV: 6, CVL: 3, BB: 9, CA: 4, CL: 3, DD: 2, AP: 2 };
 const isSunk = (s) => s.damage >= CAPACITY[s.type];
+// Mirrors SHIP_CLASSES hangar/deck_out_at in model.py.
+const HANGAR = { CV: 90, CVL: 37 }, DECK_OUT = { CV: 2, CVL: 1 };
+const hangarOf = (u) => (isTf(u)
+  ? u.ships.reduce((a, s) => a + (HANGAR[s.type] && !isSunk(s) && s.damage < DECK_OUT[s.type] ? HANGAR[s.type] : 0), 0) || null
+  : u.hangar ?? null);
 
 function onMapClick(e) {
   if (!S.picking || !S.selected) return;
@@ -306,6 +311,11 @@ function unitPanel(u) {
     sec.append(h("div", { class: "muted small" }, u.waypoint ? `Heading for ${fmtPos(u.waypoint)} at ${u.speed_kn} kn` : "Stopped"));
   }
   sec.append(h("div", { class: "small" }, `Aircraft: ${airText(u.air)}`), h("div", { class: "small" }, `On CAP: ${u.cap}`));
+  const hangar = hangarOf(u);
+  if (hangar != null) {
+    const aboard = Object.entries(u.air).filter(([k]) => S.d.types[k]?.role !== "search").reduce((a, [, n]) => a + n, 0);
+    sec.append(h("div", { class: `small ${aboard >= hangar ? "hit" : "muted"}` }, `Deck: ${aboard} of ${hangar} carrier aircraft aboard`));
+  }
   if (!operational(u)) return sec.append(h("div", { class: "hit small" }, "Cannot launch or recover aircraft")), sec;
 
   const fighters = Object.keys(u.air).filter((k) => S.d.types[k]?.role === "fighter");

@@ -129,24 +129,49 @@ def _cap_by_type(state: GameState, u: Unit) -> dict[str, int]:
     return out
 
 
+def _needs_deck(state: GameState, key: str) -> bool:
+    return state.aircraft_types[key].role != "search"  # search types are floatplanes or flying boats
+
+
+def deck_space(state: GameState, u: Unit) -> float:
+    """Room for more carrier aircraft. Floatplanes ride on cruisers and do not count."""
+    limit = u.hangar
+    if limit is None:
+        return math.inf
+    return limit - sum(n for k, n in u.air.items() if _needs_deck(state, k))
+
+
 def _land(state: GameState, side: Side, source_id: str, at: Pos, aircraft: dict[str, int], label: str,
           kind: EventKind, out: list[Event]) -> None:
+    """Recover aircraft: home deck first, then the nearest friendly decks with room; the rest ditch."""
     src = state.unit(source_id)
-    dest: Unit | None = src if src is not None and src.can_operate_aircraft else None
-    if dest is None:
-        friends: list[Unit] = [u for u in [*state.task_forces, *state.airbases]
-                               if u.side is side and u.can_operate_aircraft]
-        friends = [u for u in friends if distance_nm(at, u.pos) <= DIVERT_NM]
-        dest = min(friends, key=lambda u: distance_nm(at, u.pos), default=None)
-    n = sum(aircraft.values())
-    if dest is None:
-        if n:
-            _emit(state, out, "aircraft_lost", f"{label}: no deck or field in reach, {n} aircraft lost.", side)
-        return
-    for k, c in aircraft.items():
-        dest.air[k] = dest.air.get(k, 0) + c
-    where = "" if dest.id == source_id else f" (diverted to {dest.name})"
-    _emit(state, out, kind, f"{label}: {n} aircraft recovered{where}.", side)
+    decks: list[Unit] = [src] if src is not None and src.can_operate_aircraft else []
+    decks += sorted((u for u in [*state.task_forces, *state.airbases]
+                     if u.side is side and u.can_operate_aircraft and u is not src
+                     and distance_nm(at, u.pos) <= DIVERT_NM), key=lambda u: distance_nm(at, u.pos))
+    left = {k: n for k, n in sorted(aircraft.items()) if n > 0}
+    landed: list[tuple[Unit, int]] = []
+    for dest in decks:
+        space = deck_space(state, dest)
+        took = 0
+        for k, n in left.items():
+            put = n if not _needs_deck(state, k) else int(min(n, max(0, space)))
+            if put:
+                dest.air[k] = dest.air.get(k, 0) + put
+                left[k] -= put
+                took += put
+                if _needs_deck(state, k):
+                    space -= put
+        if took:
+            landed.append((dest, took))
+        if not any(left.values()):
+            break
+    if landed:
+        parts = [f"{n} recovered" if d is src else f"{n} diverted to {d.name}" for d, n in landed]
+        _emit(state, out, kind, f"{label}: {'; '.join(parts)}.", side)
+    if lost := sum(left.values()):
+        why = "no deck or field in reach" if not decks else "no deck space in reach"
+        _emit(state, out, "aircraft_lost", f"{label}: {why}, {lost} aircraft lost.", side)
 
 
 def _describe(tf: TaskForce, rng: random.Random) -> str:
