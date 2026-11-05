@@ -187,6 +187,7 @@ class Event(BaseModel):
     kind: EventKind
     visible_to: list[Side]
     text: str
+    refs: dict[str, str] = Field(default_factory=dict)  # ids the reader may act on; same visibility as the text
 
 
 class Daylight(BaseModel):

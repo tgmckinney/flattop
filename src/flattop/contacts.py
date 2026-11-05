@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from flattop.geo import Pos, destination
+from flattop.geo import Pos, destination, distance_nm
 from flattop.model import Contact
 
 # Unknown course changes since the report widen the circle by this much per hour.
@@ -20,3 +20,12 @@ def estimate(c: Contact, now: datetime) -> tuple[Pos, float]:
     h = age_hours(c, now)
     pos = destination(c.reported_pos, c.reported_course, c.reported_speed_kn * h)
     return pos, c.error_nm + DRIFT_NM_PER_HOUR * h
+
+
+def intercept(origin: Pos, est: Pos, course: float, speed_kn: float, air_speed_kn: float) -> Pos:
+    """Where aircraft from `origin` meet a group now at `est` holding course and speed (two passes)."""
+    aim = est
+    for _ in range(2):
+        hours = distance_nm(origin, aim) / air_speed_kn
+        aim = destination(est, course, speed_kn * hours)
+    return aim
