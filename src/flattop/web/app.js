@@ -125,14 +125,20 @@ function initMap() {
   });
   map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-left");
   map.addControl(new maplibregl.ScaleControl({ unit: "nautical" }), "bottom-left");
+  map.addControl(new CloudToggle(), "top-left");
+  Clouds.layer = h("div", { id: "clouds", class: Clouds.on ? "" : "off", "aria-hidden": "true" });
+  map.getContainer().append(Clouds.layer);
+  map.on("move", placeClouds);
+  map.on("resize", placeClouds);
   map.on("load", async () => {
     map.addSource("grid", { type: "geojson", data: graticule() });
     map.addLayer({ id: "grid", type: "line", source: "grid", paint: { "line-color": css("--grid"), "line-width": ["case", ["get", "major"], 1.2, 0.5] } });
     map.addSource("land", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
     map.addLayer({ id: "land", type: "fill", source: "land", paint: { "fill-color": css("--land"), "fill-outline-color": "#6b7d68" } });
     map.addSource("weather", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
-    map.addLayer({ id: "weather-fill", type: "fill", source: "weather", paint: { "fill-color": css("--cloud"), "fill-opacity": 0.22 } });
-    map.addLayer({ id: "weather-line", type: "line", source: "weather", paint: { "line-color": css("--cloud"), "line-width": 1, "line-opacity": 0.6, "line-dasharray": [1, 2] } });
+    // The clouds themselves are an HTML overlay (see clouds below); this outline only shows while they are hidden.
+    map.addLayer({ id: "weather-line", type: "line", source: "weather", layout: { visibility: Clouds.on ? "none" : "visible" },
+      paint: { "line-color": css("--cloud"), "line-width": 1, "line-opacity": 0.6, "line-dasharray": [1, 2] } });
     for (const id of ["areas", "lines"]) map.addSource(id, { type: "geojson", data: { type: "FeatureCollection", features: [] } });
     map.addLayer({ id: "areas-fill", type: "fill", source: "areas", paint: { "fill-color": ["get", "color"], "fill-opacity": ["get", "opacity"] } });
     map.addLayer({ id: "areas-line", type: "line", source: "areas", paint: { "line-color": ["get", "color"], "line-width": 1, "line-dasharray": [3, 2] } });
@@ -145,6 +151,129 @@ function initMap() {
     } catch { toast("Coastlines could not be loaded; the plot still works."); }
     drawMap();
   });
+}
+
+// --- clouds ----------------------------------------------------------------------------------
+// Each front is drawn as cumulus above everything on the map (markers included), so the player can
+// click it away to see what is underneath. The cloud art is rendered once per front to a bitmap and
+// then only moved and scaled, which keeps panning and zooming cheap.
+const CLOUD_KEY = "flattop.clouds";
+const Clouds = {
+  on: (() => { try { return localStorage.getItem(CLOUD_KEY) !== "off"; } catch { return true; } })(),
+  layer: null,
+  els: new Map(), // front id -> <img>
+};
+// In the cloud art's own units the front's radius is 62 of the 200-wide image (ragged edges spill past it).
+const CLOUD_R = 62, CLOUD_PX = 640;
+
+function setClouds(on) {
+  Clouds.on = on;
+  try { localStorage.setItem(CLOUD_KEY, on ? "on" : "off"); } catch { /* private window: just don't remember */ }
+  Clouds.layer.classList.toggle("off", !on);
+  if (map.getLayer("weather-line")) map.setLayoutProperty("weather-line", "visibility", on ? "none" : "visible");
+  CloudToggle.btn.classList.toggle("off", !on);
+  CloudToggle.btn.setAttribute("aria-pressed", String(on));
+  CloudToggle.btn.title = on ? "Hide clouds to see what is underneath" : "Show clouds";
+}
+
+class CloudToggle {
+  onAdd() {
+    const btn = h("button", { type: "button", class: Clouds.on ? "" : "off", "aria-pressed": String(Clouds.on),
+      title: Clouds.on ? "Hide clouds to see what is underneath" : "Show clouds", onclick: () => setClouds(!Clouds.on) }, "☁ Clouds");
+    CloudToggle.btn = btn;
+    this.el = h("div", { class: "maplibregl-ctrl maplibregl-ctrl-group wx-toggle" }, btn);
+    return this.el;
+  }
+  onRemove() { this.el.remove(); }
+}
+
+function seeded(str) {
+  let a = 0;
+  for (const ch of str) a = (Math.imul(a, 31) + ch.charCodeAt(0)) | 0;
+  return () => { // mulberry32
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// SVG for one front: a core blob ringed by lobes, roughened with fractal noise, plus a soft shadow on the sea.
+function cloudSvg(id) {
+  const rnd = seeded(id), seed = 1 + Math.floor(rnd() * 900);
+  const blobs = [[0, 0, 48]];
+  const n = 5 + Math.floor(rnd() * 3);
+  for (let i = 0; i < n; i++) {
+    const a = ((i + rnd() * 0.6) / n) * 2 * Math.PI, d = 26 + rnd() * 12;
+    blobs.push([Math.cos(a) * d, Math.sin(a) * d, 22 + rnd() * 10]);
+  }
+  const circles = blobs.map(([x, y, r]) => `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${r.toFixed(1)}"/>`).join("");
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${CLOUD_PX}" height="${CLOUD_PX}" viewBox="-100 -100 200 200">
+<defs>
+<filter id="c" x="-100" y="-100" width="200" height="200" filterUnits="userSpaceOnUse">
+<feTurbulence type="fractalNoise" baseFrequency="0.022" numOctaves="4" seed="${seed}" result="n"/>
+<feDisplacementMap in="SourceGraphic" in2="n" scale="50" xChannelSelector="R" yChannelSelector="G" result="d"/>
+<feGaussianBlur in="d" stdDeviation="2.2" result="b"/>
+<feTurbulence type="fractalNoise" baseFrequency="0.045" numOctaves="5" seed="${seed + 7}" result="t"/>
+<feColorMatrix in="t" type="matrix" values="0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 1.8 -0.55" result="ta"/>
+<feComposite in="ta" in2="b" operator="in" result="p"/>
+<feMerge><feMergeNode in="b"/><feMergeNode in="p"/></feMerge>
+</filter>
+<filter id="s" x="-100" y="-100" width="200" height="200" filterUnits="userSpaceOnUse">
+<feTurbulence type="fractalNoise" baseFrequency="0.022" numOctaves="4" seed="${seed}" result="n"/>
+<feDisplacementMap in="SourceGraphic" in2="n" scale="50" xChannelSelector="R" yChannelSelector="G" result="d"/>
+<feGaussianBlur in="d" stdDeviation="6"/>
+</filter>
+<radialGradient id="g"><stop offset="0" stop-color="#fff" stop-opacity=".85"/><stop offset=".7" stop-color="#eef2f6" stop-opacity=".55"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></radialGradient>
+</defs>
+<g filter="url(#s)" fill="#000" opacity=".35" transform="translate(6 8)">${circles}</g>
+<g filter="url(#c)" fill="url(#g)">${circles}</g>
+</svg>`;
+}
+
+// Rasterise the SVG once; if the browser won't let us read it back, use the SVG itself.
+async function cloudSrc(id) {
+  const svgUrl = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(cloudSvg(id));
+  try {
+    const img = new Image();
+    img.src = svgUrl;
+    await img.decode();
+    const cv = document.createElement("canvas");
+    cv.width = cv.height = CLOUD_PX;
+    cv.getContext("2d").drawImage(img, 0, 0);
+    const blob = await new Promise((res, rej) => cv.toBlob((b) => (b ? res(b) : rej(new Error("no blob")))));
+    return URL.createObjectURL(blob);
+  } catch { return svgUrl; }
+}
+
+function drawClouds() {
+  if (!Clouds.layer) return;
+  const live = new Set(S.d.weather.map((w) => w.id));
+  for (const [id, el] of Clouds.els) if (!live.has(id)) { el.remove(); Clouds.els.delete(id); }
+  for (const w of S.d.weather) {
+    if (Clouds.els.has(w.id)) continue;
+    const el = h("img", { alt: "", draggable: "false" });
+    el.hidden = true; // until its art is ready and it has been placed
+    Clouds.els.set(w.id, el);
+    Clouds.layer.append(el);
+    cloudSrc(w.id).then((src) => { el.src = src; el.hidden = false; placeClouds(); });
+  }
+  placeClouds();
+}
+
+function placeClouds() {
+  if (!S.d || !Clouds.layer) return;
+  for (const w of S.d.weather) {
+    const el = Clouds.els.get(w.id);
+    if (!el) continue;
+    const c = map.project(ll(w.centre));
+    const e = map.project(ll(dest(w.centre, 90, w.radius_nm)));
+    const nn = map.project(ll(dest(w.centre, 0, w.radius_nm)));
+    const sx = (Math.hypot(e.x - c.x, e.y - c.y) * 100) / CLOUD_R, sy = (Math.hypot(nn.x - c.x, nn.y - c.y) * 100) / CLOUD_R;
+    el.style.width = `${2 * sx}px`;
+    el.style.height = `${2 * sy}px`;
+    el.style.transform = `translate(${c.x - sx}px, ${c.y - sy}px)`;
+  }
 }
 
 function sideColor(side) { return css(side === "japan" ? "--japan" : "--allied"); }
@@ -181,6 +310,7 @@ function drawMap() {
   }
   map.getSource("weather").setData({ type: "FeatureCollection", features: S.d.weather.map((w) => ({
     type: "Feature", properties: {}, geometry: { type: "Polygon", coordinates: [circle(w.centre, w.radius_nm)] } })) });
+  drawClouds();
   map.getSource("areas").setData({ type: "FeatureCollection", features: areas });
   map.getSource("lines").setData({ type: "FeatureCollection", features: lines });
 

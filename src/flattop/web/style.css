@@ -59,6 +59,13 @@ pre { white-space: pre-wrap; font-size: 12px; background: #0c1d2c; padding: 8px;
 .eta { margin-left: auto; color: var(--accent); white-space: nowrap; }
 .maplibregl-canvas.picking { cursor: crosshair; }
 
+/* Clouds float above every marker but under the map controls, and never catch clicks. */
+#clouds { position: absolute; inset: 0; z-index: 1; overflow: hidden; pointer-events: none; transition: opacity .4s ease; }
+#clouds.off { opacity: 0; }
+#clouds img { position: absolute; left: 0; top: 0; max-width: none; user-select: none; }
+.wx-toggle button { width: auto; padding: 0 9px; font: 600 12px system-ui, sans-serif; color: #1a1a1a; white-space: nowrap; }
+.wx-toggle button.off { color: #777; text-decoration: line-through; }
+
 @media (max-width: 760px) {
   #game { flex-direction: column; }
   #map { height: 55vh; flex: none; }
