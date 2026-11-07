@@ -109,11 +109,30 @@ const operational = (u) => (isTf(u) ? u.ships.some((s) => ["CV", "CVL"].includes
 
 // --- map -------------------------------------------------------------------------------------
 let map;
+const GRID = { west: 140, east: 180, south: -30, north: 5 };
 function graticule() {
-  const f = [];
-  for (let lon = 140; lon <= 180; lon += 1) f.push({ type: "Feature", properties: { major: lon % 5 === 0 }, geometry: { type: "LineString", coordinates: [[lon, -30], [lon, 5]] } });
-  for (let lat = -30; lat <= 5; lat += 1) f.push({ type: "Feature", properties: { major: lat % 5 === 0 }, geometry: { type: "LineString", coordinates: [[140, lat], [180, lat]] } });
+  const f = [], { west, east, south, north } = GRID;
+  for (let lon = west; lon <= east; lon += 1) f.push({ type: "Feature", properties: { major: lon % 5 === 0 }, geometry: { type: "LineString", coordinates: [[lon, south], [lon, north]] } });
+  for (let lat = south; lat <= north; lat += 1) f.push({ type: "Feature", properties: { major: lat % 5 === 0 }, geometry: { type: "LineString", coordinates: [[west, lat], [east, lat]] } });
   return { type: "FeatureCollection", features: f };
+}
+// Degree scale along the top and left edges, like a chart border. HTML, so no glyph server is needed.
+const GRID_LABEL_MIN_PX = 44; // closer than this, label only every 5°
+function fmtDeg(v, pos, neg) { return `${Math.abs(v)}°${v < 0 ? neg : v > 0 ? pos : ""}`; }
+function gridLabels() {
+  const box = map.getContainer().querySelector(".grid-labels");
+  const b = map.getBounds(), { width, height } = map.getContainer().getBoundingClientRect();
+  const step = map.project([161, -9]).x - map.project([160, -9]).x >= GRID_LABEL_MIN_PX ? 1 : 5;
+  const out = [];
+  for (let lon = Math.ceil(Math.max(b.getWest(), GRID.west) / step) * step; lon <= Math.min(b.getEast(), GRID.east); lon += step) {
+    const x = map.project([lon, b.getNorth()]).x;
+    if (x > 56 && x < width - 24) out.push(h("span", { class: `gl lon${lon % 5 ? "" : " major"}`, style: `left:${x}px` }, fmtDeg(lon, "E", "W")));
+  }
+  for (let lat = Math.ceil(Math.max(b.getSouth(), GRID.south) / step) * step; lat <= Math.min(b.getNorth(), GRID.north); lat += step) {
+    const y = map.project([b.getWest(), lat]).y;
+    if (y > 84 && y < height - 40) out.push(h("span", { class: `gl lat${lat % 5 ? "" : " major"}`, style: `top:${y}px` }, fmtDeg(lat, "N", "S")));
+  }
+  box.replaceChildren(...out);
 }
 const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
 
@@ -132,7 +151,13 @@ function initMap() {
   map.on("resize", placeClouds);
   map.on("load", async () => {
     map.addSource("grid", { type: "geojson", data: graticule() });
-    map.addLayer({ id: "grid", type: "line", source: "grid", paint: { "line-color": css("--grid"), "line-width": ["case", ["get", "major"], 1.2, 0.5] } });
+    // Etched graticule: a light lip offset down-right of a dark groove, as if cut into a plate lit from the top-left.
+    const major = (a, b) => ["case", ["get", "major"], a, b];
+    const fadeMinor = (opacity) => ["interpolate", ["linear"], ["zoom"], 4, major(opacity[0], 0), 5, major(...opacity)]; // 1° lines go when zoomed out
+    map.addLayer({ id: "grid-lip", type: "line", source: "grid",
+      paint: { "line-color": css("--grid-lip"), "line-width": major(1, 0.8), "line-opacity": fadeMinor([0.55, 0.5]), "line-translate": [0.9, 0.9] } });
+    map.addLayer({ id: "grid", type: "line", source: "grid",
+      paint: { "line-color": css("--grid-groove"), "line-width": major(1.6, 1.1), "line-opacity": fadeMinor([1, 1]) } });
     map.addSource("land", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
     map.addLayer({ id: "land", type: "fill", source: "land", paint: { "fill-color": css("--land"), "fill-outline-color": "#6b7d68" } });
     map.addSource("weather", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
@@ -145,6 +170,10 @@ function initMap() {
     map.addLayer({ id: "lines", type: "line", source: "lines", paint: { "line-color": ["get", "color"], "line-width": 1.6, "line-dasharray": [4, 3] } });
     map.on("click", onMapClick);
     map.on("zoomend", declutter);
+    map.getContainer().append(h("div", { class: "grid-labels" }));
+    map.on("move", gridLabels);
+    map.on("resize", gridLabels);
+    gridLabels();
     try {
       const topo = await (await fetch("https://unpkg.com/world-atlas@2.0.2/land-50m.json")).json();
       map.getSource("land").setData(topojson.feature(topo, topo.objects.land));
