@@ -123,6 +123,9 @@ function gridLabels() {
   const box = map.getContainer().querySelector(".grid-labels");
   const b = map.getBounds(), { width, height } = map.getContainer().getBoundingClientRect();
   const step = map.project([161, -9]).x - map.project([160, -9]).x >= GRID_LABEL_MIN_PX ? 1 : 5;
+  // Latitude labels start below the top-left controls (zoom, clouds toggle, whatever is added there later).
+  const ctrls = map.getContainer().querySelector(".maplibregl-ctrl-top-left");
+  const latTop = (ctrls ? ctrls.getBoundingClientRect().bottom - map.getContainer().getBoundingClientRect().top : 84) + 10;
   const out = [];
   for (let lon = Math.ceil(Math.max(b.getWest(), GRID.west) / step) * step; lon <= Math.min(b.getEast(), GRID.east); lon += step) {
     const x = map.project([lon, b.getNorth()]).x;
@@ -130,7 +133,7 @@ function gridLabels() {
   }
   for (let lat = Math.ceil(Math.max(b.getSouth(), GRID.south) / step) * step; lat <= Math.min(b.getNorth(), GRID.north); lat += step) {
     const y = map.project([b.getWest(), lat]).y;
-    if (y > 84 && y < height - 40) out.push(h("span", { class: `gl lat${lat % 5 ? "" : " major"}`, style: `top:${y}px` }, fmtDeg(lat, "N", "S")));
+    if (y > latTop && y < height - 40) out.push(h("span", { class: `gl lat${lat % 5 ? "" : " major"}`, style: `top:${y}px` }, fmtDeg(lat, "N", "S")));
   }
   box.replaceChildren(...out);
 }
