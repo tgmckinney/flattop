@@ -127,7 +127,12 @@ function initMap() {
   map.addControl(new maplibregl.ScaleControl({ unit: "nautical" }), "bottom-left");
   map.on("load", async () => {
     map.addSource("grid", { type: "geojson", data: graticule() });
-    map.addLayer({ id: "grid", type: "line", source: "grid", paint: { "line-color": css("--grid"), "line-width": ["case", ["get", "major"], 1.2, 0.5] } });
+    // Etched graticule: a light lip offset down-right of a dark groove, as if cut into a plate lit from the top-left.
+    const major = (a, b) => ["case", ["get", "major"], a, b];
+    map.addLayer({ id: "grid-lip", type: "line", source: "grid",
+      paint: { "line-color": css("--grid-lip"), "line-width": major(1, 0.6), "line-opacity": major(0.55, 0.35), "line-translate": [0.9, 0.9] } });
+    map.addLayer({ id: "grid", type: "line", source: "grid",
+      paint: { "line-color": css("--grid-groove"), "line-width": major(1.6, 0.8), "line-opacity": major(1, 0.85) } });
     map.addSource("land", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
     map.addLayer({ id: "land", type: "fill", source: "land", paint: { "fill-color": css("--land"), "fill-outline-color": "#6b7d68" } });
     map.addSource("weather", { type: "geojson", data: { type: "FeatureCollection", features: [] } });

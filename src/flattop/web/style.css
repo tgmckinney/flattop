@@ -1,5 +1,5 @@
 :root {
-  --sea: #0e2233; --land: #3b4a3a; --grid: #1f3a52; --ink: #e6e1d3; --dim: #9aa6b2; --line: #2a4560;
+  --sea: #0e2233; --land: #3b4a3a; --grid-groove: #050f18; --grid-lip: #4d7ea6; --ink: #e6e1d3; --dim: #9aa6b2; --line: #2a4560;
   --panel: #13283b; --allied: #5aa9e6; --japan: #e0645c; --accent: #e8c15a; --bad: #ff8a80; --cloud: #c9d2dc;
   font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--ink);
 }
