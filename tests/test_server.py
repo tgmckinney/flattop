@@ -173,4 +173,6 @@ def test_simultaneous_final_submissions_resolve_once(db):
 def test_serves_map_page(api):
     r = api.get("/")
     assert r.status_code == 200 and "maplibre-gl" in r.text
-    assert api.get("/app.js").status_code == 200
+    js = api.get("/app.js")
+    assert js.status_code == 200 and js.headers["cache-control"] == "no-cache", "browsers must not run a stale app.js"
+    assert api.get("/", headers={"if-none-match": r.headers["etag"]}).status_code == 304
