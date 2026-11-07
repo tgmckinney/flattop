@@ -1,5 +1,5 @@
 :root {
-  --sea: #0e2233; --land: #3b4a3a; --grid: #1f3a52; --ink: #e6e1d3; --dim: #9aa6b2; --line: #2a4560;
+  --sea: #0e2233; --land: #3b4a3a; --grid-groove: #050f18; --grid-lip: #4d7ea6; --ink: #e6e1d3; --dim: #9aa6b2; --line: #2a4560;
   --panel: #13283b; --allied: #5aa9e6; --japan: #e0645c; --accent: #e8c15a; --bad: #ff8a80; --cloud: #c9d2dc;
   font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--ink);
 }
@@ -57,6 +57,12 @@ pre { white-space: pre-wrap; font-size: 12px; background: #0c1d2c; padding: 8px;
 .mk.sunk { opacity: .35; }
 .tag { position: absolute; left: 18px; top: -1px; white-space: nowrap; font-size: 11px; color: var(--ink); text-shadow: 0 0 3px #000, 0 0 3px #000; pointer-events: none; }
 .eta { margin-left: auto; color: var(--accent); white-space: nowrap; }
+.grid-labels { position: absolute; inset: 0; pointer-events: none; z-index: 1; overflow: hidden; }
+.gl { position: absolute; font: 10px ui-monospace, Menlo, monospace; color: #9cb4c8; letter-spacing: .04em;
+      text-shadow: -1px -1px 0 var(--grid-groove), 1px 1px 0 rgba(77, 126, 166, .25); white-space: nowrap; }
+.gl.major { color: #b5c7d6; font-weight: 600; }
+.gl.lon { top: 4px; transform: translateX(-50%); }
+.gl.lat { left: 6px; transform: translateY(-50%); }
 .maplibregl-canvas.picking { cursor: crosshair; }
 
 @media (max-width: 760px) {
