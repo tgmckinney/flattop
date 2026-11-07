@@ -77,5 +77,14 @@
     {"id": "ESP", "side": "allied", "name": "Espiritu Santo", "pos": {"lat": -15.5, "lon": 167.2}, "air": {"PBY": 6, "B17": 10}},
     {"id": "RAB", "side": "japan", "name": "Rabaul", "pos": {"lat": -4.2, "lon": 152.2}, "air": {"A6M": 15, "G4M": 24}},
     {"id": "SHO", "side": "japan", "name": "Shortland", "pos": {"lat": -7.05, "lon": 155.85}, "air": {"H6K": 6}}
+  ],
+  "weather": [
+    {"id": "W1", "name": "Front north of Malaita", "pos": {"lat": -7.0, "lon": 160.5}, "at": "1942-08-23T04:00:00",
+     "radius_nm": 110, "drift_deg": 200, "drift_kn": 5, "end": "1942-08-24T08:00:00", "search_factor": 0.3, "acquire_nm": 10},
+    {"id": "W2", "name": "Squalls east of the Stewart Islands", "pos": {"lat": -6.0, "lon": 163.5}, "at": "1942-08-23T04:00:00",
+     "radius_nm": 80, "drift_deg": 250, "drift_kn": 6, "end": "1942-08-24T18:00:00", "search_factor": 0.5, "acquire_nm": 15},
+    {"id": "W3", "name": "Rain squalls south of San Cristobal", "pos": {"lat": -11.0, "lon": 162.0}, "at": "1942-08-23T12:00:00",
+     "radius_nm": 50, "drift_deg": 290, "drift_kn": 8, "start": "1942-08-23T12:00:00", "end": "1942-08-24T00:00:00",
+     "search_factor": 0.5, "acquire_nm": 15}
   ]
 }

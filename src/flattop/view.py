@@ -23,6 +23,26 @@ class ContactView(BaseModel):
     description: str
 
 
+class WeatherView(BaseModel):
+    id: str
+    name: str
+    centre: Pos
+    radius_nm: float
+    drift_deg: float
+    drift_kn: float
+    end: datetime | None
+
+
+def weather_now(state: GameState) -> list[WeatherView]:
+    """Active fronts where they are now. Weather is public: both sides and the umpire see the same."""
+    out = []
+    for f in state.weather:
+        if (c := f.centre(state.time)) is not None:
+            out.append(WeatherView(id=f.id, name=f.name, centre=c, radius_nm=f.radius_nm,
+                                   drift_deg=f.drift_deg, drift_kn=f.drift_kn, end=f.end))
+    return out
+
+
 class SideView(BaseModel):
     side: Side
     time: datetime
@@ -36,6 +56,7 @@ class SideView(BaseModel):
     awaiting_umpire: bool
     log: list[Event]
     aircraft_types: dict[str, AircraftType]  # public reference data, both sides
+    weather: list[WeatherView]
 
 
 def view(state: GameState, side: Side) -> SideView:
@@ -64,4 +85,5 @@ def view(state: GameState, side: Side) -> SideView:
         awaiting_umpire=bool(state.pending),
         log=[e for e in state.log if side in e.visible_to],
         aircraft_types=state.aircraft_types,
+        weather=weather_now(state),
     )

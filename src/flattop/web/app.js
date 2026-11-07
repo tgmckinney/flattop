@@ -90,13 +90,14 @@ function norm(body) {
   if (body.view) {
     const v = body.view;
     return { side: v.side, time: v.time, isDay: v.is_day, tfs: v.task_forces, bases: v.airbases, contacts: v.contacts,
-             searches: v.searches, strikes: v.strikes, log: v.log, types: v.aircraft_types };
+             searches: v.searches, strikes: v.strikes, log: v.log, types: v.aircraft_types, weather: v.weather };
   }
   const s = body.state;
   const tod = s.time.slice(11, 19);
   return {
     side: null, time: s.time, isDay: s.daylight.sunrise <= tod && tod < s.daylight.sunset,
     tfs: s.task_forces, bases: s.airbases, searches: s.searches, strikes: s.strikes, log: s.log, types: s.aircraft_types,
+    weather: body.weather ?? [],
     contacts: s.contacts.map((c) => ({ ...c, estimated_pos: c.reported_pos, uncertainty_nm: c.error_nm, age_minutes: null })),
   };
 }
@@ -129,6 +130,9 @@ function initMap() {
     map.addLayer({ id: "grid", type: "line", source: "grid", paint: { "line-color": css("--grid"), "line-width": ["case", ["get", "major"], 1.2, 0.5] } });
     map.addSource("land", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
     map.addLayer({ id: "land", type: "fill", source: "land", paint: { "fill-color": css("--land"), "fill-outline-color": "#6b7d68" } });
+    map.addSource("weather", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+    map.addLayer({ id: "weather-fill", type: "fill", source: "weather", paint: { "fill-color": css("--cloud"), "fill-opacity": 0.22 } });
+    map.addLayer({ id: "weather-line", type: "line", source: "weather", paint: { "line-color": css("--cloud"), "line-width": 1, "line-opacity": 0.6, "line-dasharray": [1, 2] } });
     for (const id of ["areas", "lines"]) map.addSource(id, { type: "geojson", data: { type: "FeatureCollection", features: [] } });
     map.addLayer({ id: "areas-fill", type: "fill", source: "areas", paint: { "fill-color": ["get", "color"], "fill-opacity": ["get", "opacity"] } });
     map.addLayer({ id: "areas-line", type: "line", source: "areas", paint: { "line-color": ["get", "color"], "line-width": 1, "line-dasharray": [3, 2] } });
@@ -175,6 +179,8 @@ function drawMap() {
     const f = S.form.search, t = S.d.types[f.aircraft];
     if (t) poly(sector(sel.pos, f.bearing_from, f.bearing_to, t.search_radius_nm), acc, 0.05);
   }
+  map.getSource("weather").setData({ type: "FeatureCollection", features: S.d.weather.map((w) => ({
+    type: "Feature", properties: {}, geometry: { type: "Polygon", coordinates: [circle(w.centre, w.radius_nm)] } })) });
   map.getSource("areas").setData({ type: "FeatureCollection", features: areas });
   map.getSource("lines").setData({ type: "FeatureCollection", features: lines });
 
@@ -286,7 +292,7 @@ function render() {
     if (sel && mine(sel)) p.append(unitPanel(sel));
     p.append(forcesPanel());
   }
-  p.append(missionsPanel(), contactsPanel(), logPanel());
+  p.append(missionsPanel(), contactsPanel(), weatherPanel(), logPanel());
   drawMap();
 }
 
@@ -310,6 +316,8 @@ function unitPanel(u) {
       h("button", { onclick: () => { S.draft.moves = S.draft.moves.filter((o) => o.tf_id !== u.id).concat({ tf_id: u.id, waypoint: null, speed_kn: 0 }); render(); } }, "Stop")));
     sec.append(h("div", { class: "muted small" }, u.waypoint ? `Heading for ${fmtPos(u.waypoint)} at ${u.speed_kn} kn` : "Stopped"));
   }
+  const wx = weatherOver(u.pos);
+  if (wx.length) sec.append(h("div", { class: "small cloud" }, `☁ Under cloud: ${wx.map((w) => w.name).join(", ")}`));
   sec.append(h("div", { class: "small" }, `Aircraft: ${airText(u.air)}`), h("div", { class: "small" }, `On CAP: ${u.cap}`));
   const hangar = hangarOf(u);
   if (hangar != null) {
@@ -409,6 +417,18 @@ function missionsPanel() {
   if (!rows.length) return "";
   return h("section", {}, h("h2", {}, "Aircraft aloft"),
     h("ul", { class: "list small" }, rows.map(([side, id, what, when]) => h("li", {}, h("b", { class: side }, id), h("span", {}, what), h("span", { class: "eta" }, when)))));
+}
+
+const weatherOver = (p) => S.d.weather.filter((w) => dist(w.centre, p) <= w.radius_nm);
+const COMPASS = ["north", "north-east", "east", "south-east", "south", "south-west", "west", "north-west"];
+
+function weatherPanel() {
+  if (!S.d.weather.length) return h("section", {}, h("h2", {}, "Weather"), h("div", { class: "muted small" }, "Clear skies."));
+  return h("section", {}, h("h2", {}, "Weather"),
+    h("div", { class: "muted small" }, "Groups under cloud are hard to find from the air, and strikes must come close to find them."),
+    h("ul", { class: "list small" }, S.d.weather.map((w) => h("li", { class: "click", onclick: () => map.easeTo({ center: ll(w.centre) }) },
+      h("span", { class: "cloud" }, "☁"), h("span", {}, w.name),
+      h("span", { class: "eta" }, [w.drift_kn ? `moving ${COMPASS[Math.round(w.drift_deg / 45) % 8]} ${w.drift_kn} kn` : "", w.drift_kn && w.end ? ", " : "", w.end ? `clears ${fmtTime(w.end)}` : ""])))));
 }
 
 function logPanel() {

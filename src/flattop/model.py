@@ -8,7 +8,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from flattop.geo import Pos
+from flattop.geo import Pos, destination, distance_nm
 
 
 class Side(StrEnum):
@@ -197,6 +197,34 @@ class Event(BaseModel):
     refs: dict[str, str] = Field(default_factory=dict)  # ids the reader may act on; same visibility as the text
 
 
+class Front(BaseModel):
+    """A weather area: cloud and rain that hide ships from the air. Public to both sides.
+
+    Its centre drifts in a straight line from `pos` at time `at`. Outside `start`..`end` it does not exist.
+    """
+
+    id: str
+    name: str
+    pos: Pos
+    at: datetime
+    radius_nm: float
+    drift_deg: float = 0
+    drift_kn: float = 0
+    start: datetime | None = None
+    end: datetime | None = None
+    search_factor: float = Field(0.3, ge=0, le=1)  # multiplies the chance a search sees a group inside
+    acquire_nm: float = 10.0  # how close a strike must come to find a group inside
+
+    def centre(self, t: datetime) -> Pos | None:
+        if (self.start and t < self.start) or (self.end and t >= self.end):
+            return None
+        return destination(self.pos, self.drift_deg, self.drift_kn * (t - self.at).total_seconds() / 3600)
+
+    def covers(self, p: Pos, t: datetime) -> bool:
+        c = self.centre(t)
+        return c is not None and distance_nm(c, p) <= self.radius_nm
+
+
 class Daylight(BaseModel):
     sunrise: time
     sunset: time
@@ -218,6 +246,7 @@ class GameState(BaseModel):
     strikes: list[StrikeMission] = Field(default_factory=list)
     pending: list[Engagement] = Field(default_factory=list)
     log: list[Event] = Field(default_factory=list)
+    weather: list[Front] = Field(default_factory=list)
     # Per-side counters: a shared counter would let a player infer enemy activity from gaps in their own ids.
     next_id: dict[str, int] = Field(default_factory=dict)
 
@@ -231,6 +260,11 @@ class GameState(BaseModel):
     def is_day(self, t: datetime | None = None) -> bool:
         tod = (t or self.time).time()
         return self.daylight.sunrise <= tod < self.daylight.sunset
+
+    def front_over(self, p: Pos) -> Front | None:
+        """The thickest active weather over `p` (lowest search factor), if any."""
+        over = [f for f in self.weather if f.covers(p, self.time)]
+        return min(over, key=lambda f: f.search_factor) if over else None
 
     def tf(self, id_: str) -> TaskForce | None:
         return next((t for t in self.task_forces if t.id == id_), None)

@@ -29,6 +29,7 @@ def to_dawn(s: GameState) -> GameState:
 def staged(s: GameState, dist_nm: float = 150) -> GameState:
     """Kido Butai stopped `dist_nm` due north of TF 16 at dawn."""
     s = to_dawn(s).model_copy(deep=True)
+    s.weather = []  # clear skies: weather has its own tests
     kb, tf16 = s.tf("KB"), s.tf("TF16")
     kb.pos, kb.waypoint, kb.speed_kn = destination(tf16.pos, 0, dist_nm), None, 0
     for tf in s.task_forces:
