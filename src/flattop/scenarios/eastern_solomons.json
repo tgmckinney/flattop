@@ -85,6 +85,15 @@
      "radius_nm": 80, "drift_deg": 250, "drift_kn": 6, "end": "1942-08-24T18:00:00", "search_factor": 0.5, "acquire_nm": 15},
     {"id": "W3", "name": "Rain squalls south of San Cristobal", "pos": {"lat": -11.0, "lon": 162.0}, "at": "1942-08-23T12:00:00",
      "radius_nm": 50, "drift_deg": 290, "drift_kn": 8, "start": "1942-08-23T12:00:00", "end": "1942-08-24T00:00:00",
+     "search_factor": 0.5, "acquire_nm": 15},
+    {"id": "W4", "name": "Squall line west of the Santa Cruz Islands", "pos": {"lat": -9.5, "lon": 164.5}, "at": "1942-08-24T06:00:00",
+     "radius_nm": 70, "drift_deg": 280, "drift_kn": 6, "start": "1942-08-24T06:00:00", "end": "1942-08-25T06:00:00",
+     "search_factor": 0.5, "acquire_nm": 15},
+    {"id": "W5", "name": "Front over the Stewart Islands", "pos": {"lat": -6.5, "lon": 161.5}, "at": "1942-08-24T12:00:00",
+     "radius_nm": 100, "drift_deg": 210, "drift_kn": 4, "start": "1942-08-24T12:00:00", "end": "1942-08-25T18:00:00",
+     "search_factor": 0.3, "acquire_nm": 10},
+    {"id": "W6", "name": "Rain squalls north of Guadalcanal", "pos": {"lat": -8.6, "lon": 159.5}, "at": "1942-08-25T00:00:00",
+     "radius_nm": 60, "drift_deg": 120, "drift_kn": 5, "start": "1942-08-25T00:00:00",
      "search_factor": 0.5, "acquire_nm": 15}
   ]
 }
