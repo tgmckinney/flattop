@@ -6,18 +6,22 @@ Doctrine, kept deliberately simple:
 - With a fresh contact in range, launch every bomber that can reach it, escorted by half the free fighters.
 - Carrier groups close on a known enemy carrier until it is inside strike range (by day, and overnight to
   open the next morning at about strike range), and retire away from the enemy once half their decks are out.
+- Weather: a threatened carrier group with nothing to close on slips under nearby cloud and keeps pace
+  with it; a crippled group retires into cloud if there is some on the way out. Old reports of a group
+  under cloud are not worth a strike (it will not be found), so the scouts go back instead, and with no
+  other lead they look into nearby fronts first.
 - Groups without carriers follow the scenario's waypoints.
 """
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from flattop.contacts import intercept
-from flattop.geo import bearing_deg, destination, distance_nm
+from flattop.geo import Pos, bearing_deg, destination, distance_nm
 from flattop.model import Airbase, AircraftType, EventKind, TaskForce
 from flattop.orders import CapOrder, MoveOrder, Orders, SearchOrder, StrikeOrder
-from flattop.view import ContactView, SideView
+from flattop.view import ContactView, SideView, WeatherView
 
 # Events that make the bot re-plan mid-run. They never stop the player's clock (see `Store.interrupts`).
 WAKE_ON: frozenset[EventKind] = frozenset(
@@ -35,6 +39,11 @@ DASH_KN = 24
 CLOSE_TO = 0.8  # of strike radius: where a closing carrier group aims to sit
 NIGHT_MEMORY_MINUTES = 12 * 60  # how old a carrier report may be and still be worth closing on overnight
 RETIRE_NM = 300
+HIDE_NM = 150  # how far beyond a front's edge a group will steam to get under it
+HIDE_KN = 20
+HIDE_MARGIN_NM = 15  # inside the edge by this much counts as hidden
+KEEP_PACE_HOURS = 3  # a group under a drifting front aims where the centre will be this far ahead
+CLOUD_STRIKE_MAX_AGE = 30  # minutes: an older report of a group under cloud is not worth a strike
 
 Unit = TaskForce | Airbase
 BOMBER_ROLES = ("dive", "torpedo", "level")
@@ -45,16 +54,60 @@ def _score(c: ContactView) -> float:
     return ("carrier" in d) * 100 + ("transport" in d) * 20 - c.age_minutes / 10
 
 
-def _search_axis(u: Unit, v: SideView) -> float:
+def _front_at(w: WeatherView, v: SideView, hours: float) -> Pos | None:
+    """Where the front's centre will be in `hours`, or None if it will have cleared."""
+    if w.end and v.time + timedelta(hours=hours) >= w.end:
+        return None
+    return destination(w.centre, w.drift_deg, w.drift_kn * hours)
+
+
+def _cloud_over(p: Pos, v: SideView, margin: float = 0) -> WeatherView | None:
+    return next((w for w in v.weather if distance_nm(w.centre, p) <= w.radius_nm - margin), None)
+
+
+def _recent_snoopers(v: SideView) -> list:
+    return [e for e in v.log if e.kind == "snooper"
+            and (v.time - e.time).total_seconds() <= SNOOPER_MEMORY_MINUTES * 60]
+
+
+def _shelter(tf: TaskForce, v: SideView, ok=lambda p: True) -> MoveOrder | None:
+    """Get under (or stay under) the nearest usable front. `ok` vetoes goals, e.g. out of strike range."""
+    for w in sorted(v.weather, key=lambda w: distance_nm(tf.pos, w.centre) - w.radius_nm):
+        d = distance_nm(tf.pos, w.centre)
+        if d > w.radius_nm + HIDE_NM:
+            break
+        if d <= w.radius_nm - HIDE_MARGIN_NM:  # hidden: keep pace with it
+            if _front_at(w, v, 1) is None:
+                continue  # clearing within the hour: look for another
+            goal = _front_at(w, v, KEEP_PACE_HOURS) or w.centre
+            if not w.drift_kn:
+                return MoveOrder(tf_id=tf.id, waypoint=None, speed_kn=0)
+            if not ok(goal):
+                return None
+            return MoveOrder(tf_id=tf.id, waypoint=goal, speed_kn=min(32, round(distance_nm(tf.pos, goal) / KEEP_PACE_HOURS, 1)))
+        goal = w.centre
+        for _ in range(2):  # lead a drifting front
+            hours = max(0.0, distance_nm(tf.pos, goal) - w.radius_nm / 2) / HIDE_KN
+            goal = _front_at(w, v, hours + 2)  # it must still be there two hours after we arrive
+            if goal is None:
+                break
+        if goal is not None and ok(goal):
+            return MoveOrder(tf_id=tf.id, waypoint=goal, speed_kn=HIDE_KN)
+    return None
+
+
+def _search_axis(u: Unit, v: SideView, radius_nm: float = 0) -> float:
     """Best guess at where the enemy is: any contact, else where a recent snooper came from,
-    else the way we are heading, else rotate by the hour."""
+    else the nearest front within reach (where we would hide), else the way we are heading,
+    else rotate by the hour."""
     if v.contacts:
         c = min(v.contacts, key=lambda c: distance_nm(u.pos, c.estimated_pos))
         return bearing_deg(u.pos, c.estimated_pos)
-    snoops = [e for e in v.log if e.kind == "snooper"
-              and (v.time - e.time).total_seconds() <= SNOOPER_MEMORY_MINUTES * 60]
-    if snoops:
+    if snoops := _recent_snoopers(v):
         return float(snoops[-1].refs["bearing"])
+    fronts = [w for w in v.weather if 0 < distance_nm(u.pos, w.centre) <= radius_nm]
+    if fronts:
+        return bearing_deg(u.pos, min(fronts, key=lambda w: distance_nm(u.pos, w.centre)).centre)
     if isinstance(u, TaskForce) and u.waypoint and distance_nm(u.pos, u.waypoint) > 20:
         return bearing_deg(u.pos, u.waypoint)
     return (v.time.hour * 90) % 360
@@ -72,7 +125,7 @@ def _search(u: Unit, v: SideView, types: dict[str, AircraftType]) -> SearchOrder
     else:
         return None
     width = min(359, count * SEARCH_DEG_PER_PLANE)  # 359, not 360: equal bearings mean all-round
-    axis = _search_axis(u, v)
+    axis = _search_axis(u, v, types[k].search_radius_nm)
     return SearchOrder(source_id=u.id, aircraft=k, count=count,
                        bearing_from=round(axis - width / 2) % 360, bearing_to=round(axis + width / 2) % 360)
 
@@ -108,10 +161,13 @@ def _move(tf: TaskForce, v: SideView, types: dict[str, AircraftType]) -> MoveOrd
     total, working = _carriers(tf)
     if not total:
         return None
-    if working * 2 < total:  # retire: away from the nearest known enemy, else toward the nearest friendly field
+    if working * 2 < total:  # retire: into cloud on the way out, else away from the nearest known enemy,
+        # else toward the nearest friendly field
         if v.contacts:
             c = min(v.contacts, key=lambda c: distance_nm(tf.pos, c.estimated_pos))
             away = (bearing_deg(c.estimated_pos, tf.pos)) % 360
+            if m := _shelter(tf, v, ok=lambda p: distance_nm(p, c.estimated_pos) > distance_nm(tf.pos, c.estimated_pos)):
+                return m
         elif v.airbases:
             away = bearing_deg(tf.pos, min(v.airbases, key=lambda b: distance_nm(tf.pos, b.pos)).pos)
         else:
@@ -121,12 +177,13 @@ def _move(tf: TaskForce, v: SideView, types: dict[str, AircraftType]) -> MoveOrd
                  if n > 0 and types[k].role in BOMBER_ROLES), default=0)
     memory = FRESH_MINUTES if v.is_day else NIGHT_MEMORY_MINUTES
     carriers = [c for c in v.contacts if "carrier" in c.description and c.age_minutes <= memory]
+    threatened = bool(carriers or _recent_snoopers(v))
     if not reach or not carriers:
-        return None
+        return _shelter(tf, v) if threatened else None
     c = min(carriers, key=lambda c: distance_nm(tf.pos, c.estimated_pos))
     d = distance_nm(tf.pos, c.estimated_pos)
-    if d <= reach * RANGE_MARGIN:
-        return None  # in range: hold course for the strike and its recovery
+    if d <= reach * RANGE_MARGIN:  # in range: hide if cloud is near enough to keep the target in range
+        return _shelter(tf, v, ok=lambda p: distance_nm(p, c.estimated_pos) <= reach * RANGE_MARGIN)
     stand_off = reach * CLOSE_TO
     goal = destination(tf.pos, bearing_deg(tf.pos, c.estimated_pos), d - stand_off)
     return MoveOrder(tf_id=tf.id, waypoint=goal, speed_kn=DASH_KN)
@@ -142,7 +199,9 @@ def bot_orders(v: SideView) -> Orders:
         if e.kind == "strike_launched" and (cid := e.refs.get("contact")):
             last_struck[cid] = e.time
     targets = sorted((c for c in v.contacts if c.age_minutes <= FRESH_MINUTES
-                      and (c.id not in last_struck or c.reported_at > last_struck[c.id])), key=_score, reverse=True)
+                      and (c.id not in last_struck or c.reported_at > last_struck[c.id])
+                      and not (c.age_minutes > CLOUD_STRIKE_MAX_AGE and _cloud_over(c.estimated_pos, v))),
+                     key=_score, reverse=True)
     carrier_known = any("carrier" in c.description for c in targets)  # a spent report sends the scouts out again
     for tf in v.task_forces:
         if (m := _move(tf, v, types)) is not None:
