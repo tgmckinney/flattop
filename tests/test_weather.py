@@ -75,3 +75,11 @@ def test_weather_does_not_leak_enemy_positions():
     moved.tf("TF16").pos = destination(moved.tf("TF16").pos, 90, 100)  # now under the front, unseen
     assert view(s, JP) == view(moved, JP)
     assert bot_orders(view(s, JP)) == bot_orders(view(moved, JP))
+
+
+def test_scenario_has_weather_every_hour():
+    s = load_scenario("eastern_solomons")
+    t = s.time
+    while t <= s.end:
+        assert any(f.centre(t) for f in s.weather), f"no weather at {t}"
+        t += timedelta(hours=1)
