@@ -144,3 +144,73 @@ def test_snooper_warns_the_found_side_and_steers_bot_searches():
     for o in searches:
         mid = (o.bearing_from + ((o.bearing_to - o.bearing_from) % 360) / 2) % 360
         assert abs((mid - axis + 180) % 360 - 180) <= 1
+
+
+# --- weather ------------------------------------------------------------------------------------
+
+def _front(s: GameState, centre, radius_nm=60, **kw):
+    from flattop.model import Front
+
+    return Front(id="WX", name="Test front", pos=centre, at=s.time, radius_nm=radius_nm, **kw)
+
+
+def test_threatened_bot_hides_under_nearby_cloud_within_strike_range():
+    s = _with_carrier_contact(staged(load_scenario("eastern_solomons"), dist_nm=150))
+    s.weather = [_front(s, destination(s.tf("KB").pos, 270, 100))]
+    m = _kb_move(s)
+    assert distance_nm(m.waypoint, s.weather[0].pos) < 1
+    assert distance_nm(m.waypoint, s.tf("TF16").pos) <= 250 * 0.95, "must stay in strike range of the target"
+    s.weather = [_front(s, destination(s.tf("KB").pos, 0, 150))]  # cloud out of range of the target: stay put
+    assert not [m for m in bot_orders(view(s, JP)).moves if m.tf_id == "KB"]
+
+
+def test_unthreatened_bot_ignores_cloud():
+    s = staged(load_scenario("eastern_solomons"))
+    s.weather = [_front(s, destination(s.tf("KB").pos, 270, 100))]
+    assert not [m for m in bot_orders(view(s, JP)).moves if m.tf_id == "KB"]
+
+
+def test_hidden_bot_keeps_pace_with_a_drifting_front():
+    s = _with_carrier_contact(staged(load_scenario("eastern_solomons"), dist_nm=150))
+    s.weather = [_front(s, s.tf("KB").pos, drift_deg=90, drift_kn=10)]
+    m = _kb_move(s)
+    assert distance_nm(m.waypoint, destination(s.tf("KB").pos, 90, 30)) < 1 and m.speed_kn == pytest.approx(10, abs=0.2)
+
+
+def test_crippled_bot_retires_into_cloud_on_the_way_out():
+    s = _with_carrier_contact(staged(load_scenario("eastern_solomons"), dist_nm=150))
+    for ship in s.tf("KB").ships:
+        if ship.type == "CV":
+            ship.damage = 2
+    away = destination(s.tf("KB").pos, 0, 120)  # north: away from TF 16
+    s.weather = [_front(s, away), _front(s, destination(s.tf("KB").pos, 180, 60))]  # the nearer one is toward the enemy
+    s.weather[1].id = "WY"
+    assert distance_nm(_kb_move(s).waypoint, away) < 1
+
+
+def test_bot_does_not_strike_an_old_report_under_cloud_and_searches_it_again():
+    from datetime import timedelta
+
+    s = _with_carrier_contact(staged(load_scenario("eastern_solomons"), dist_nm=150))
+    c = s.contacts[0]
+    c.reported_at = s.time - timedelta(minutes=60)
+    s.weather = [_front(s, c.reported_pos)]
+    o = bot_orders(view(s, JP))
+    assert not o.strikes
+    assert any(abs(_mid(x) - 180) <= 1 for x in o.searches if x.source_id == "KB"), \
+        "should search back toward the lost contact (due south)"
+    s.weather = []
+    assert bot_orders(view(s, JP)).strikes, "in clear weather the same report is struck"
+
+
+def _mid(x) -> float:
+    return (x.bearing_from + ((x.bearing_to - x.bearing_from) % 360) / 2) % 360
+
+
+def test_bot_searches_toward_cloud_with_no_other_lead():
+    s = staged(load_scenario("eastern_solomons"))
+    kb = s.tf("KB").pos
+    s.weather = [_front(s, destination(kb, 60, 150))]
+    o = bot_orders(view(s, JP))
+    x = next(x for x in o.searches if x.source_id == "KB")
+    assert abs(_mid(x) - 60) <= 1.5
