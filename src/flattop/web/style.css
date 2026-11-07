@@ -1,6 +1,6 @@
 :root {
   --sea: #0e2233; --land: #3b4a3a; --grid: #1f3a52; --ink: #e6e1d3; --dim: #9aa6b2; --line: #2a4560;
-  --panel: #13283b; --allied: #5aa9e6; --japan: #e0645c; --accent: #e8c15a; --bad: #ff8a80;
+  --panel: #13283b; --allied: #5aa9e6; --japan: #e0645c; --accent: #e8c15a; --bad: #ff8a80; --cloud: #c9d2dc;
   font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--ink);
 }
 * { box-sizing: border-box; }
@@ -36,6 +36,7 @@ label { display: block; margin: 4px 0; }
 .list li.click:hover { color: var(--accent); }
 .allied { color: var(--allied); } .japan { color: var(--japan); }
 .hit { color: var(--bad); }
+.cloud { color: var(--cloud); }
 .log li { display: block; font-size: 12px; }
 .log time { color: var(--dim); font-family: ui-monospace, Menlo, monospace; margin-right: 6px; }
 pre { white-space: pre-wrap; font-size: 12px; background: #0c1d2c; padding: 8px; border-radius: 4px; }

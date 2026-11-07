@@ -339,6 +339,19 @@ def _report(state: GameState, m: SearchMission, tf: TaskForce, rng: random.Rando
               f"Assume we have been reported.", tf.side, refs={"bearing": f"{came_from:.0f}", "tf": tf.id})
 
 
+def search_p(state: GameState, base: float, tf: TaskForce) -> float:
+    """Chance a search that passes over `tf` sees it: `base`, cut by any weather over it."""
+    f = state.front_over(tf.pos)
+    return base * f.search_factor if f else base
+
+
+def acquire_nm(state: GameState, tf: TaskForce) -> float:
+    """How close a strike must come to `tf` to find it."""
+    nm = ACQUIRE_NM_DAY if state.is_day() else ACQUIRE_NM_NIGHT
+    f = state.front_over(tf.pos)
+    return min(nm, f.acquire_nm) if f else nm
+
+
 def _search(state: GameState, rng: random.Random, out: list[Event]) -> None:
     day = state.is_day()
     for m in list(state.searches):
@@ -346,7 +359,7 @@ def _search(state: GameState, rng: random.Random, out: list[Event]) -> None:
         elapsed_h = (state.time - m.launched_at).total_seconds() / 3600
         reach = min(m.radius_nm, at.speed_kn * elapsed_h)
         if day:
-            p = min(1.0, m.count * SEARCH_DEG_PER_PLANE / sector_width(m.bearing_from, m.bearing_to)) * SEARCH_BASE_P
+            base = min(1.0, m.count * SEARCH_DEG_PER_PLANE / sector_width(m.bearing_from, m.bearing_to)) * SEARCH_BASE_P
             for tf in state.task_forces:
                 if tf.side is m.side or tf.id in m.checked or not tf.afloat:
                     continue
@@ -354,7 +367,8 @@ def _search(state: GameState, rng: random.Random, out: list[Event]) -> None:
                     bearing_deg(m.origin, tf.pos), m.bearing_from, m.bearing_to
                 ):
                     m.checked.append(tf.id)
-                    if rng.random() < p:
+                    # A miss is silent either way: the searcher must not learn that cloud hid something.
+                    if rng.random() < search_p(state, base, tf):
                         _report(state, m, tf, rng, out)
         if elapsed_h >= 2 * m.radius_nm / at.speed_kn:
             state.searches.remove(m)
@@ -362,9 +376,8 @@ def _search(state: GameState, rng: random.Random, out: list[Event]) -> None:
 
 
 def _engage(state: GameState, m: StrikeMission, resolver: Resolver, rng: random.Random, out: list[Event]) -> None:
-    acquire = ACQUIRE_NM_DAY if state.is_day() else ACQUIRE_NM_NIGHT
     targets = [t for t in state.task_forces
-               if t.side is m.side.enemy and t.afloat and distance_nm(t.pos, m.aim) <= acquire]
+               if t.side is m.side.enemy and t.afloat and distance_nm(t.pos, m.aim) <= acquire_nm(state, t)]
     if not targets:
         _emit(state, out, "strike_missed", f"Strike {m.id} found nothing at {fmt_pos(m.aim)} and is returning.", m.side)
         _turn_home(state, m)

@@ -33,12 +33,20 @@ FLATTOP_DB=flattop.db uv run flattop-server   # map: http://127.0.0.1:8000/  API
 Each submission asks for `phase` (fixed minutes) or `run` (until an interrupt). The more cautious request wins.
 Only events a player can see stop their clock. With two hidden players that means public events only; in solo the bot re-plans on its own events without stopping yours.
 
+## Weather
+
+Scenarios list fronts (`weather` in the JSON): a circle that drifts in a straight line and exists between `start` and `end`.
+A group under cloud is harder to find: a search's chance of seeing it is multiplied by `search_factor`.
+A strike must come within `acquire_nm` of it to find it, instead of 30 nm.
+Weather is public; both sides see the same fronts. A search that cloud defeats reports nothing, as any miss does.
+
 Properties the tests enforce:
 
 - Same state and orders give the same result.
 - `step` never mutates its input.
 - Player views carry no enemy ids, names or true positions; every allied/japan API response over a full strike cycle is checked for this.
 - The bot's orders depend only on its side's view (moving an unseen enemy changes nothing), and its private events never stop the player's clock.
+- Weather is the same in both views, and moving an unseen enemy under cloud changes nothing in the other side's view.
 - Ids are counted per side, so gaps in your own ids reveal nothing about the enemy.
 - Concurrent final submissions resolve a phase once (`BEGIN IMMEDIATE`).
 

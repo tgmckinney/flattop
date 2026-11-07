@@ -15,7 +15,7 @@ from flattop.orders import Orders
 from flattop.scenario import list_scenarios
 from flattop.sheet import engagement_sheet
 from flattop.store import Advance, GameConfig, Role, SeatStatus, Store, StoreError
-from flattop.view import SideView, view
+from flattop.view import SideView, WeatherView, view, weather_now
 
 
 class Created(BaseModel):
@@ -36,6 +36,7 @@ class SeatView(BaseModel):
     status: SeatStatus
     view: SideView | None = None  # players
     state: GameState | None = None  # umpire only
+    weather: list[WeatherView] | None = None  # umpire only: fronts where they are now (players have it in `view`)
 
 
 class PendingSheet(BaseModel):
@@ -54,7 +55,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
     def seat_view(token: str) -> SeatView:
         role, _, state, status = store.seat(token)
         if role == "umpire":
-            return SeatView(status=status, state=state)
+            return SeatView(status=status, state=state, weather=weather_now(state))
         return SeatView(status=status, view=view(state, Side(role)))
 
     @app.get("/api/scenarios")
