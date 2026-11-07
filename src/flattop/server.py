@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -16,6 +17,17 @@ from flattop.scenario import list_scenarios
 from flattop.sheet import engagement_sheet
 from flattop.store import Advance, GameConfig, Role, SeatStatus, Store, StoreError
 from flattop.view import SideView, WeatherView, view, weather_now
+
+
+class FreshStaticFiles(StaticFiles):
+    """Static files the browser must revalidate on every load (a cheap 304 when unchanged).
+
+    Without Cache-Control, browsers cache heuristically and keep running an old app.js after an update."""
+
+    def file_response(self, *args: Any, **kwargs: Any) -> Response:
+        r = super().file_response(*args, **kwargs)
+        r.headers["Cache-Control"] = "no-cache"
+        return r
 
 
 class Created(BaseModel):
@@ -97,7 +109,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
     def actions(token: str) -> list[dict]:
         return store.actions(token)
 
-    app.mount("/", StaticFiles(directory=Path(__file__).parent / "web", html=True), name="web")
+    app.mount("/", FreshStaticFiles(directory=Path(__file__).parent / "web", html=True), name="web")
     return app
 
 
