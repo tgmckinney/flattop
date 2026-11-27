@@ -74,8 +74,8 @@ def test_same_groups_fight_once_per_cooldown(night):
     r = step(s, minutes=110, resolver=AUTO)
     assert kinds(r.events).count("surface_action") == 2
     r = step(s, minutes=130, resolver=AUTO)
-    if r.state.tf("TAN").afloat and r.state.tf("TF16").afloat:
-        assert kinds(r.events).count("surface_action") == 4
+    assert r.state.tf("TAN").afloat and r.state.tf("TF16").afloat
+    assert kinds(r.events).count("surface_action") == 4
 
 
 def test_radar_contact_outside_gun_range(night):
@@ -108,6 +108,8 @@ def test_action_reports_leak_no_enemy_truth(night):
         v = view(r.state, side).model_dump_json()
         assert enemy.id not in v and enemy.name not in v
         assert not any(sh.name in v for sh in enemy.ships)
+        c = next(c for c in r.state.contacts if c.side is side and c.target_id == enemy.id)
+        assert c.reported_pos != r.state.tf(enemy.id).pos
 
 
 def test_resolver_surprised_side_holds_fire_in_round_one():

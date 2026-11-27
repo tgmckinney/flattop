@@ -548,14 +548,21 @@ def _detect(state: GameState, obs: TaskForce, tgt: TaskForce, dist: float) -> st
 HOW = {"radar": "radar reports", "lookouts": "lookouts report", "chance": "a brief sighting of"}
 
 
+def _close_contact(state: GameState, side: Side, tgt: TaskForce, err: float, desc: str,
+                   rng: random.Random) -> Contact:
+    """A contact from close range: small error, never the true position, course or speed."""
+    pos = destination(tgt.pos, rng.uniform(0, 360), rng.uniform(0.2, 1) * err)
+    course = (_course(tgt) + rng.gauss(0, 10)) % 360
+    speed = max(0.0, round(tgt.speed_kn + rng.gauss(0, 2)))
+    return _set_contact(state, side, tgt, pos, course, speed, err, desc)
+
+
 def _surface_contact(state: GameState, obs: TaskForce, tgt: TaskForce, way: str, out: list[Event]) -> None:
     rng = _rng(state, f"surfdesc:{obs.id}:{tgt.id}")
     err = 1.0 if way == "radar" else 2.0
-    pos = destination(tgt.pos, rng.uniform(0, 360), rng.uniform(0, err))
-    course = (_course(tgt) + rng.gauss(0, 10)) % 360
-    speed = max(0.0, round(tgt.speed_kn + rng.gauss(0, 2)))
     desc = _describe(tgt, rng)
-    c = _set_contact(state, obs.side, tgt, pos, course, speed, err, desc)
+    c = _close_contact(state, obs.side, tgt, err, desc, rng)
+    pos = c.reported_pos
     key = f"{obs.id}|{tgt.id}"
     last = state.surface_seen.get(key)
     state.surface_seen[key] = state.time
@@ -599,7 +606,7 @@ def _surface_action(state: GameState, a: TaskForce, b: TaskForce, seen: dict[Sid
         # After a fight each side knows where the other is. Keep the action report as the only event.
         state.surface_seen[f"{tf.id}|{enemy.id}"] = state.time
         if enemy.afloat:
-            _set_contact(state, tf.side, enemy, enemy.pos, _course(enemy), enemy.speed_kn, 1.0, desc)
+            _close_contact(state, tf.side, enemy, 1.0, desc, _rng(state, f"actpos:{act.id}:{tf.side}"))
 
 
 def _surface(state: GameState, start: Mapping[str, Pos], resolver: SurfaceResolver, out: list[Event]) -> set[str]:
