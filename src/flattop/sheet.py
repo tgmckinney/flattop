@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from flattop.geo import fmt_pos
-from flattop.model import SHIP_CLASSES, AircraftType, Engagement
+from flattop.model import SHIP_CLASSES, AircraftType, Doctrine, Engagement, Side, SurfaceAction
 
 
 def engagement_sheet(e: Engagement, types: dict[str, AircraftType]) -> str:
@@ -28,4 +28,25 @@ def engagement_sheet(e: Engagement, types: dict[str, AircraftType]) -> str:
         "",
         "Return result as EngagementResult JSON: attacker_losses, cap_losses, ship_damage (by ship name).",
     ]
+    return "\n".join(lines)
+
+
+def surface_sheet(a: SurfaceAction, doctrine: dict[Side, Doctrine]) -> str:
+    lines = [
+        f"# Surface action {a.id}",
+        "",
+        f"- Time: {a.time:%d %b %Y %H:%M} ({'day' if a.daylight else 'night'})",
+        f"- Position: {fmt_pos(a.pos)}",
+        f"- Surprised (no fire in the first round): {', '.join(a.surprised) or 'neither side'}",
+    ]
+    for side in sorted(a.ships):
+        lines += [
+            "",
+            f"## {side} ({a.tfs[side]}), torpedo factor {doctrine[side].torpedo_factor}",
+            "| Ship | Type | Damage | Capacity | Guns | Torpedoes | Radar nm |",
+            "|---|---|---|---|---|---|---|",
+            *[f"| {s.name} | {s.type} | {s.damage} | {SHIP_CLASSES[s.type].capacity} | {SHIP_CLASSES[s.type].guns} "
+              f"| {SHIP_CLASSES[s.type].torpedoes} | {s.radar_nm:g} |" for s in a.ships[side]],
+        ]
+    lines += ["", "Return result as SurfaceResult JSON: ship_damage by side, then by ship name."]
     return "\n".join(lines)

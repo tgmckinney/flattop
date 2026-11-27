@@ -117,9 +117,18 @@ class AutoResolver:
 
 
 class SurfaceResolver(Protocol):
-    """Resolves a surface action. Only automatic resolution exists now; a tabletop or tactical resolver can replace it."""
+    """Resolves a surface action now, or returns None to defer it to the tabletop."""
 
-    def resolve(self, a: SurfaceAction, doctrine: dict[Side, Doctrine], rng: random.Random) -> SurfaceResult: ...
+    def resolve(
+        self, a: SurfaceAction, doctrine: dict[Side, Doctrine], rng: random.Random
+    ) -> SurfaceResult | None: ...
+
+
+class TabletopSurfaceResolver:
+    """Defers every surface action: the engine pauses until `engine.resolve_pending` is called."""
+
+    def resolve(self, a: SurfaceAction, doctrine: dict[Side, Doctrine], rng: random.Random) -> None:
+        return None
 
 
 class AutoSurfaceResolver:

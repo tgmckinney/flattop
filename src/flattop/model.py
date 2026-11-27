@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from datetime import datetime, time
 from enum import StrEnum
-from typing import Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Discriminator, Field, Tag
 
 from flattop.geo import Pos, destination, distance_nm
 
@@ -156,6 +156,7 @@ class StrikeMission(BaseModel):
 class Engagement(BaseModel):
     """An air attack ready for resolution. Doubles as the tabletop engagement sheet."""
 
+    kind: Literal["air"] = "air"
     id: str
     time: datetime
     pos: Pos
@@ -172,6 +173,7 @@ class Engagement(BaseModel):
 class SurfaceAction(BaseModel):
     """A gun and torpedo action between two surface groups, ready for resolution."""
 
+    kind: Literal["surface"] = "surface"
     id: str
     time: datetime
     pos: Pos
@@ -179,6 +181,16 @@ class SurfaceAction(BaseModel):
     tfs: dict[Side, str]
     ships: dict[Side, list[Ship]]
     surprised: list[Side] = Field(default_factory=list)  # sides that did not see the enemy first: no fire in round 1
+
+
+def _pending_kind(v: Any) -> str:
+    """Saved games from before surface actions have air engagements with no `kind`."""
+    return v.get("kind", "air") if isinstance(v, dict) else v.kind
+
+
+Pending = Annotated[
+    Annotated[Engagement, Tag("air")] | Annotated[SurfaceAction, Tag("surface")], Discriminator(_pending_kind)
+]
 
 
 class SurfaceResult(BaseModel):
@@ -284,7 +296,7 @@ class GameState(BaseModel):
     contacts: list[Contact] = Field(default_factory=list)
     searches: list[SearchMission] = Field(default_factory=list)
     strikes: list[StrikeMission] = Field(default_factory=list)
-    pending: list[Engagement] = Field(default_factory=list)
+    pending: list[Pending] = Field(default_factory=list)
     log: list[Event] = Field(default_factory=list)
     weather: list[Front] = Field(default_factory=list)
     doctrine: dict[Side, Doctrine] = Field(default_factory=default_doctrine)

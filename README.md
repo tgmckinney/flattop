@@ -9,10 +9,10 @@ WW2 Pacific carrier campaign aid. The engine runs in phases, with simultaneous o
 | `model.py` | `GameState`: umpire truth (task forces, bases, contacts, missions, log) |
 | `orders.py` | Per-phase orders: move, CAP, search, strike |
 | `engine.py` | `step()` (fixed phase), `advance()` (run until something happens), `resolve_pending()` (tabletop result in) |
-| `resolve.py` | Air: `AutoResolver` (seeded) and `TabletopResolver` (pauses for the umpire). Surface: `AutoSurfaceResolver` |
+| `resolve.py` | Air: `AutoResolver` (seeded) and `TabletopResolver` (pauses for the umpire). Surface: `AutoSurfaceResolver` and `TabletopSurfaceResolver` |
 | `bot.py` | Solo opponent: reads only its own `SideView`; searches, holds CAP, strikes fresh contacts, closes to strike range, retires when crippled, hides under cloud when threatened, searches into fronts |
 | `view.py` | `view(state, side)`: the only thing a player client should receive |
-| `sheet.py` | Markdown engagement sheet for tabletop play |
+| `sheet.py` | Markdown sheets for tabletop play: air engagements and surface actions |
 | `scenarios/` | Scenario JSON (Eastern Solomons, approximate) |
 | `store.py` | SQLite sessions: seats, phase submissions, append-only action log |
 | `server.py` | FastAPI app; a seat token is the only credential |
@@ -57,7 +57,9 @@ If one side has contact and the groups come within gun range (15 nm by day, 6 nm
 A side that did not see the enemy does not fire in the first round.
 The same two groups do not fight again for 120 minutes.
 Gun and torpedo values are on the ship classes (`model.py`). The side's `torpedo_factor` scales torpedo hits.
-Surface actions resolve automatically in every mode for now. `SurfaceResolver` is the slot for a tabletop or tactical resolver later.
+`surface_resolver` in the game config picks `auto` or `tabletop`. If you omit it, it follows `resolver`.
+With `tabletop`, the clock stops at the action (`engagement_pending` to both sides). The umpire, or the solo player, gets the sheet from `GET /api/seats/<token>/engagements` (`kind: "surface"`) and posts a `SurfaceResult` to `/api/seats/<token>/surface-actions/<id>`: `{"ship_damage": {"allied": {"Balch": 1}, "japan": {"Jintsu": 2}}}`.
+Two-player games refuse `tabletop` for surface actions too, because the sheet shows both sides' ships.
 
 ## Damage control
 

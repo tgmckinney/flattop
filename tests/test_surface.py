@@ -3,11 +3,12 @@ from datetime import UTC, datetime
 
 import pytest
 
-from flattop.engine import DEFAULT_INTERRUPTS, advance, step, two_player_interrupts
+from flattop.engine import DEFAULT_INTERRUPTS, EngineError, advance, resolve_pending, step, two_player_interrupts
 from flattop.geo import destination, distance_nm
-from flattop.model import GameState, Side, SurfaceAction
-from flattop.resolve import AutoResolver, AutoSurfaceResolver
+from flattop.model import EngagementResult, GameState, Side, SurfaceAction, SurfaceResult
+from flattop.resolve import AutoResolver, AutoSurfaceResolver, TabletopSurfaceResolver
 from flattop.scenario import load_scenario
+from flattop.sheet import surface_sheet
 from flattop.view import view
 
 AUTO = AutoResolver()
@@ -146,3 +147,27 @@ def test_sunk_ship_is_never_repaired(night):
 
 def test_default_interrupts_include_surface_events():
     assert {"surface_contact", "surface_action"} <= DEFAULT_INTERRUPTS
+
+
+def test_tabletop_surface_action_pauses_then_applies_result(night):
+    s = place(night, 3)
+    r = step(s, minutes=60, resolver=AUTO, surface_resolver=TabletopSurfaceResolver())
+    assert r.interrupted and len(r.state.pending) == 1
+    act = r.state.pending[0]
+    assert isinstance(act, SurfaceAction) and act.tfs == {US: "TF16", JP: "TAN"}
+    assert kinds(r.events, US)[-1] == kinds(r.events, JP)[-1] == "engagement_pending"
+    assert "Jintsu" in surface_sheet(act, r.state.doctrine)
+    with pytest.raises(EngineError):
+        step(r.state, minutes=10, resolver=AUTO)
+    with pytest.raises(EngineError, match="not in action"):
+        resolve_pending(r.state, act.id, SurfaceResult(ship_damage={US: {"Jintsu": 1}}))
+    with pytest.raises(EngineError, match="surface result"):
+        resolve_pending(r.state, act.id, EngagementResult())
+    done = resolve_pending(r.state, act.id, SurfaceResult(ship_damage={JP: {"Jintsu": 3}, US: {"Balch": 1}}))
+    assert not done.state.pending
+    assert next(sh for sh in done.state.tf("TAN").ships if sh.name == "Jintsu").sunk
+    assert next(sh for sh in done.state.tf("TF16").ships if sh.name == "Balch").damage == 1
+    us_report = next(e.text for e in done.events if e.kind == "surface_action" and US in e.visible_to)
+    assert "Balch" in us_report and "Jintsu" not in us_report and "a ship seen sinking" in us_report
+    # The cooldown started when the action began, so the clock runs on.
+    assert "surface_action" not in kinds(step(done.state, minutes=60, resolver=AUTO).events)

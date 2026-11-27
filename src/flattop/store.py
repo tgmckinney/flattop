@@ -30,9 +30,16 @@ from flattop.engine import (
     step,
     two_player_interrupts,
 )
-from flattop.model import EngagementResult, GameState, Side
+from flattop.model import EngagementResult, GameState, Side, SurfaceResult
 from flattop.orders import OrderError, Orders
-from flattop.resolve import AutoResolver, AutoSurfaceResolver, Resolver, SurfaceResolver, TabletopResolver
+from flattop.resolve import (
+    AutoResolver,
+    AutoSurfaceResolver,
+    Resolver,
+    SurfaceResolver,
+    TabletopResolver,
+    TabletopSurfaceResolver,
+)
 from flattop.scenario import load_scenario
 from flattop.view import view
 
@@ -83,7 +90,15 @@ class GameConfig(BaseModel):
     scenario: str = "eastern_solomons"
     mode: Mode = Mode.SOLO
     resolver: Literal["auto", "tabletop"] = "auto"
-    surface_resolver: Literal["auto"] = "auto"  # surface actions resolve automatically in every mode for now
+    surface_resolver: Literal["auto", "tabletop"] | None = None  # None: same as `resolver`
+
+    @property
+    def surface(self) -> Literal["auto", "tabletop"]:
+        return self.surface_resolver or self.resolver
+
+    @property
+    def any_tabletop(self) -> bool:
+        return "tabletop" in (self.resolver, self.surface)
     solo_side: Side = Side.ALLIED
     phase_minutes: int = Field(default=60, ge=10, le=24 * 60, multiple_of=10)
 
@@ -93,6 +108,7 @@ class SeatStatus(BaseModel):
     role: Role
     mode: Mode
     resolver: str
+    surface_resolver: str
     phase: int
     phase_minutes: int
     must_submit: list[Role]
@@ -157,7 +173,7 @@ class Store:
     @staticmethod
     def can_resolve(cfg: GameConfig, role: Role) -> bool:
         """Who may see engagement sheets and enter tabletop results. Sheets reveal the target's ships."""
-        return cfg.resolver == "tabletop" and (role == "umpire" or cfg.mode is Mode.SOLO)
+        return cfg.any_tabletop and (role == "umpire" or cfg.mode is Mode.SOLO)
 
     @staticmethod
     def interrupts(cfg: GameConfig) -> Interrupts:
@@ -174,7 +190,7 @@ class Store:
 
     @staticmethod
     def surface_resolver(cfg: GameConfig) -> SurfaceResolver:
-        return AutoSurfaceResolver()
+        return TabletopSurfaceResolver() if cfg.surface == "tabletop" else AutoSurfaceResolver()
 
     # --- reads ------------------------------------------------------------------------------------
 
@@ -198,7 +214,7 @@ class Store:
                 )
             ]
         status = SeatStatus(
-            game_id=game_id, role=role, mode=cfg.mode, resolver=cfg.resolver, phase=phase, phase_minutes=cfg.phase_minutes,
+            game_id=game_id, role=role, mode=cfg.mode, resolver=cfg.resolver, surface_resolver=cfg.surface, phase=phase, phase_minutes=cfg.phase_minutes,
             must_submit=self.must_submit(cfg), submitted=submitted, awaiting_umpire=bool(state.pending),
             can_resolve=self.can_resolve(cfg, role), finished=state.time >= state.end,
         )
@@ -217,7 +233,7 @@ class Store:
     # --- writes -----------------------------------------------------------------------------------
 
     def create(self, cfg: GameConfig) -> tuple[str, dict[Role, str]]:
-        if cfg.mode is Mode.TWO_PLAYER and cfg.resolver == "tabletop":
+        if cfg.mode is Mode.TWO_PLAYER and cfg.any_tabletop:
             raise StoreError(422, "two-player games auto-resolve: tabletop sheets reveal the target's ships")
         try:
             state = load_scenario(cfg.scenario)
@@ -270,7 +286,7 @@ class Store:
             self._run(c, game_id, cfg, phase, state, role, forced=advance)
         return self.seat(token)[3]
 
-    def resolve(self, token: str, engagement_id: str, result: EngagementResult) -> SeatStatus:
+    def resolve(self, token: str, engagement_id: str, result: EngagementResult | SurfaceResult) -> SeatStatus:
         with self._tx() as c:
             game_id, role, cfg, phase, state = self._load(c, token)
             if not self.can_resolve(cfg, role):
