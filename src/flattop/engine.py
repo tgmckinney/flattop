@@ -28,12 +28,14 @@ from flattop.model import (
     EventKind,
     GameState,
     SearchMission,
+    Ship,
     Side,
     StrikeMission,
+    SurfaceAction,
     TaskForce,
 )
 from flattop.orders import CapOrder, MoveOrder, OrderError, Orders, SearchOrder, StrikeOrder
-from flattop.resolve import Resolver
+from flattop.resolve import AutoSurfaceResolver, Resolver, SurfaceResolver
 
 SEARCH_DEG_PER_PLANE = 10.0
 SEARCH_BASE_P = 0.85
@@ -42,14 +44,25 @@ ACQUIRE_NM_NIGHT = 8.0
 MUTUAL_CAP_NM = 25.0
 DIVERT_NM = 200.0
 SNOOPER_SPOTTED_P = 0.6  # chance a found group sees the scout that found it (daylight only)
+# Surface contact and action
+SURFACE_RADAR_P = 0.8  # chance per tick that radar finds a group inside its range
+SURFACE_LOOKOUT_P = 0.6  # chance per tick that lookouts find a group inside their range
+SURFACE_CHANCE_P = 0.1  # chance per tick of a sighting out to twice lookout range (gun flash, wake, a gap in the rain)
+WEATHER_LOOKOUT_FACTOR = 0.4  # lookout range under cloud and rain
+GUN_NM_DAY = 15.0  # groups this close that have seen each other fight
+GUN_NM_NIGHT = 6.0
+SURFACE_REPORT_MINUTES = 60  # a group held in contact reports again only after this gap
+ACTION_COOLDOWN_MINUTES = 120  # the same two groups do not fight again sooner
+REPAIRABLE_P = 0.5  # chance that one point of damage is something damage control can fix at sea
 COMPASS = ("north", "north-east", "east", "south-east", "south", "south-west", "west", "north-west")
 
 DEFAULT_INTERRUPTS: frozenset[EventKind] = frozenset(
-    {"dawn", "dusk", "waypoint", "sighting", "snooper", "attack", "engagement_pending"}
+    {"dawn", "dusk", "waypoint", "sighting", "snooper", "attack", "engagement_pending", "surface_contact",
+     "surface_action"}
 )
 # Two-player: the clock is shared, so stopping on a private event (one side's sighting) would tell
 # the other side something happened. Only events both sides receive may stop the clock.
-PUBLIC_INTERRUPTS: frozenset[EventKind] = frozenset({"dawn", "dusk", "attack", "engagement_pending"})
+PUBLIC_INTERRUPTS: frozenset[EventKind] = frozenset({"dawn", "dusk", "attack", "engagement_pending", "surface_action"})
 
 Interrupts = frozenset[EventKind] | Mapping[Side, frozenset[EventKind]]
 
@@ -318,15 +331,7 @@ def _report(state: GameState, m: SearchMission, tf: TaskForce, rng: random.Rando
     course = (_course(tf) + rng.gauss(0, 20)) % 360
     speed = max(0.0, round(tf.speed_kn + rng.gauss(0, 3)))
     desc = _describe(tf, rng)
-    c = next((c for c in state.contacts if c.side is m.side and c.target_id == tf.id), None)
-    if c is None:
-        c = Contact(id=state.new_id("C", m.side), side=m.side, target_id=tf.id, reported_at=state.time,
-                    reported_pos=pos, reported_course=course, reported_speed_kn=speed, error_nm=err,
-                    description=desc)
-        state.contacts.append(c)
-    else:
-        c.reported_at, c.reported_pos, c.reported_course = state.time, pos, course
-        c.reported_speed_kn, c.error_nm, c.description = speed, err, desc
+    c = _set_contact(state, m.side, tf, pos, course, speed, err, desc)
     src = state.unit(m.source_id)
     _emit(state, out, "sighting",
           f"Search {m.id} ({src.name if src else '?'}) reports {desc} at {fmt_pos(pos)}, "
@@ -337,6 +342,20 @@ def _report(state: GameState, m: SearchMission, tf: TaskForce, rng: random.Rando
         _emit(state, out, "snooper",
               f"{tf.name} sighted an enemy scout plane, probably from the {COMPASS[round(came_from / 45) % 8]}. "
               f"Assume we have been reported.", tf.side, refs={"bearing": f"{came_from:.0f}", "tf": tf.id})
+
+
+def _set_contact(state: GameState, side: Side, tf: TaskForce, pos: Pos, course: float, speed: float, err: float,
+                 desc: str) -> Contact:
+    c = next((c for c in state.contacts if c.side is side and c.target_id == tf.id), None)
+    if c is None:
+        c = Contact(id=state.new_id("C", side), side=side, target_id=tf.id, reported_at=state.time,
+                    reported_pos=pos, reported_course=course, reported_speed_kn=speed, error_nm=err,
+                    description=desc)
+        state.contacts.append(c)
+    else:
+        c.reported_at, c.reported_pos, c.reported_course = state.time, pos, course
+        c.reported_speed_kn, c.error_nm, c.description = speed, err, desc
+    return c
 
 
 def search_p(state: GameState, base: float, tf: TaskForce) -> float:
@@ -431,21 +450,7 @@ def _apply_result(state: GameState, e: Engagement, r: EngagementResult, out: lis
             n -= take
     target = state.tf(e.target_tf)
     assert target is not None
-    sunk: list[str] = []
-    hit: list[str] = []
-    for ship in target.ships:
-        d = r.ship_damage.get(ship.name, 0)
-        if d <= 0 or ship.sunk:
-            continue
-        ship.damage = min(SHIP_CLASSES[ship.type].capacity, ship.damage + d)
-        (sunk if ship.sunk else hit).append(ship.name)
-    if not target.can_operate_aircraft and target.air and not any(
-        s.type in ("CV", "CVL") and not s.sunk for s in target.ships
-    ):
-        n = sum(target.air.values())
-        target.air, target.cap = {}, 0
-        if n:
-            _emit(state, out, "aircraft_lost", f"{n} aircraft lost with the carriers of {target.name}.", target.side)
+    hit, sunk = _damage_tf(state, target, r.ship_damage, _rng(state, f"hits:{e.id}"), out)
 
     defender = target.side
     lost_att = sum(r.attacker_losses.values())
@@ -463,6 +468,35 @@ def _apply_result(state: GameState, e: Engagement, r: EngagementResult, out: lis
     _turn_home(state, m)
 
 
+def _hit(ship: Ship, d: int, rng: random.Random) -> None:
+    """Add damage. Each new point is repairable at sea with chance REPAIRABLE_P. A sunk ship has nothing to repair."""
+    d = min(d, SHIP_CLASSES[ship.type].capacity - ship.damage)
+    if d <= 0:
+        return
+    ship.damage += d
+    ship.repairable = 0 if ship.sunk else ship.repairable + sum(rng.random() < REPAIRABLE_P for _ in range(d))
+
+
+def _damage_tf(state: GameState, tf: TaskForce, damage: Mapping[str, int], rng: random.Random,
+               out: list[Event]) -> tuple[list[str], list[str]]:
+    """Apply damage by ship name. Returns (hit, sunk) names. Aircraft go down with the last carrier."""
+    hit: list[str] = []
+    sunk: list[str] = []
+    for ship in tf.ships:
+        d = damage.get(ship.name, 0)
+        if d <= 0 or ship.sunk:
+            continue
+        _hit(ship, d, rng)
+        (sunk if ship.sunk else hit).append(ship.name)
+    carrier_lost = any(s.name in sunk and s.type in ("CV", "CVL") for s in tf.ships)
+    if carrier_lost and tf.air and not any(s.type in ("CV", "CVL") and not s.sunk for s in tf.ships):
+        n = sum(tf.air.values())
+        tf.air, tf.cap = {}, 0
+        if n:
+            _emit(state, out, "aircraft_lost", f"{n} aircraft lost with the carriers of {tf.name}.", tf.side)
+    return hit, sunk
+
+
 def _strikes(state: GameState, resolver: Resolver, rng: random.Random, out: list[Event]) -> None:
     for m in list(state.strikes):
         if m.phase == "outbound" and state.time >= m.arrive_at:
@@ -471,6 +505,140 @@ def _strikes(state: GameState, resolver: Resolver, rng: random.Random, out: list
             state.strikes.remove(m)
             src = state.unit(m.source_id)
             _land(state, m.side, m.source_id, src.pos if src else m.aim, m.aircraft, f"Strike {m.id}", "strike_recovered", out)
+
+
+def _closest(o0: Pos, o1: Pos, t0: Pos, t1: Pos) -> float:
+    """Closest distance between two groups moving in straight lines over one tick (flat-earth, fine at these ranges)."""
+
+    def xy(p: Pos) -> tuple[float, float]:
+        d, b = distance_nm(o0, p), math.radians(bearing_deg(o0, p))
+        return d * math.sin(b), d * math.cos(b)
+
+    (tx0, ty0), (ox1, oy1), (tx1, ty1) = xy(t0), xy(o1), xy(t1)
+    rx, ry = tx0, ty0  # target relative to observer at the start of the tick
+    dx, dy = (tx1 - ox1) - rx, (ty1 - oy1) - ry
+    n = dx * dx + dy * dy
+    f = 0.0 if n == 0 else min(1.0, max(0.0, -(rx * dx + ry * dy) / n))
+    return math.hypot(rx + f * dx, ry + f * dy)
+
+
+def radar_nm(tf: TaskForce) -> float:
+    return max((s.radar_nm for s in tf.afloat), default=0.0)
+
+
+def lookout_nm(state: GameState, side: Side, a: TaskForce, b: TaskForce) -> float:
+    """Lookout range between two groups: the side's day or night range, cut if cloud covers either group."""
+    d = state.doctrine[side]
+    nm = d.day_lookout_nm if state.is_day() else d.night_lookout_nm
+    return nm * WEATHER_LOOKOUT_FACTOR if state.front_over(a.pos) or state.front_over(b.pos) else nm
+
+
+def _detect(state: GameState, obs: TaskForce, tgt: TaskForce, dist: float) -> str | None:
+    """How `obs` finds `tgt` this tick ("radar", "lookouts", "chance"), or None. Radar ignores dark and weather."""
+    radar, look = radar_nm(obs), lookout_nm(state, obs.side, obs, tgt)
+    ways = [(w, p) for w, p, rng_nm in (("radar", SURFACE_RADAR_P, radar), ("lookouts", SURFACE_LOOKOUT_P, look),
+                                        ("chance", SURFACE_CHANCE_P, 2 * look)) if dist <= rng_nm]
+    rng = _rng(state, f"surf:{obs.id}:{tgt.id}")
+    for way, p in ways:  # one roll per way, so each form of contact can succeed on its own
+        if rng.random() < p:
+            return way
+    return None
+
+
+HOW = {"radar": "radar reports", "lookouts": "lookouts report", "chance": "a brief sighting of"}
+
+
+def _surface_contact(state: GameState, obs: TaskForce, tgt: TaskForce, way: str, out: list[Event]) -> None:
+    rng = _rng(state, f"surfdesc:{obs.id}:{tgt.id}")
+    err = 1.0 if way == "radar" else 2.0
+    pos = destination(tgt.pos, rng.uniform(0, 360), rng.uniform(0, err))
+    course = (_course(tgt) + rng.gauss(0, 10)) % 360
+    speed = max(0.0, round(tgt.speed_kn + rng.gauss(0, 2)))
+    desc = _describe(tgt, rng)
+    c = _set_contact(state, obs.side, tgt, pos, course, speed, err, desc)
+    key = f"{obs.id}|{tgt.id}"
+    last = state.surface_seen.get(key)
+    state.surface_seen[key] = state.time
+    if last is not None and state.time - last < timedelta(minutes=SURFACE_REPORT_MINUTES):
+        return
+    rng_nm, brg = distance_nm(obs.pos, pos), bearing_deg(obs.pos, pos)
+    _emit(state, out, "surface_contact",
+          f"{obs.name}: {HOW[way]} enemy ships, {desc}, at {fmt_pos(pos)}, bearing {brg:03.0f}, {rng_nm:.0f} nm. "
+          f"Contact {c.id}.", obs.side, refs={"contact": c.id})
+
+
+def _surface_action(state: GameState, a: TaskForce, b: TaskForce, seen: dict[Side, str | None],
+                    resolver: SurfaceResolver, out: list[Event]) -> None:
+    act = SurfaceAction(
+        id=state.new_id("A"), time=state.time, pos=b.pos, daylight=state.is_day(),
+        tfs={a.side: a.id, b.side: b.id},
+        ships={a.side: [s.model_copy() for s in a.afloat], b.side: [s.model_copy() for s in b.afloat]},
+        surprised=[side for side, way in sorted(seen.items()) if way is None],
+    )
+    rng = _rng(state, f"action:{act.id}")
+    res = resolver.resolve(act, state.doctrine, rng)
+    state.surface_fought["|".join(sorted((a.id, b.id)))] = state.time
+    # Each side describes the enemy as it saw it at the start of the action.
+    seen_as = {tf.side: _describe(enemy, _rng(state, f"actdesc:{act.id}:{tf.side}")) for tf, enemy in ((a, b), (b, a))}
+    losses: dict[Side, tuple[list[str], list[str]]] = {}
+    for tf in (a, b):
+        losses[tf.side] = _damage_tf(state, tf, res.ship_damage.get(tf.side, {}), rng, out)
+    for tf, enemy in ((a, b), (b, a)):
+        hit, sunk = losses[tf.side]
+        e_hit, e_sunk = losses[enemy.side]
+        seen_hit = len(e_hit) + len(e_sunk)
+        first = " We opened fire first." if enemy.side in act.surprised else (
+            " The enemy opened fire first." if tf.side in act.surprised else "")
+        desc = seen_as[tf.side]
+        _emit(state, out, "surface_action",
+              f"Surface action at {fmt_pos(act.pos)}: {tf.name} engaged enemy ships, {desc}.{first} "
+              f"Our ships hit: {', '.join(hit) or 'none'}. Sunk: {', '.join(sunk) or 'none'}. "
+              f"Enemy ships seen hit: {seen_hit}{', a ship seen sinking' if e_sunk else ''}.", tf.side)
+        for name in sunk:
+            _emit(state, out, "ship_sunk", f"{name} has sunk.", tf.side)
+        # After a fight each side knows where the other is. Keep the action report as the only event.
+        state.surface_seen[f"{tf.id}|{enemy.id}"] = state.time
+        if enemy.afloat:
+            _set_contact(state, tf.side, enemy, enemy.pos, _course(enemy), enemy.speed_kn, 1.0, desc)
+
+
+def _surface(state: GameState, start: Mapping[str, Pos], resolver: SurfaceResolver, out: list[Event]) -> set[str]:
+    """Surface contact between every pair of enemy groups, then any action. Returns ids of groups that fought."""
+    fought: set[str] = set()
+    allied = [t for t in state.task_forces if t.side is Side.ALLIED and t.afloat]
+    japan = [t for t in state.task_forces if t.side is Side.JAPAN and t.afloat]
+    gun_nm = GUN_NM_DAY if state.is_day() else GUN_NM_NIGHT
+    for a in allied:
+        for b in japan:
+            if not (a.afloat and b.afloat):
+                continue
+            dist = _closest(start.get(a.id, a.pos), a.pos, start.get(b.id, b.pos), b.pos)
+            seen = {a.side: _detect(state, a, b, dist), b.side: _detect(state, b, a, dist)}
+            for obs, tgt in ((a, b), (b, a)):
+                if (way := seen[obs.side]) is not None:
+                    _surface_contact(state, obs, tgt, way, out)
+            last = state.surface_fought.get("|".join(sorted((a.id, b.id))))
+            cooled = last is None or state.time - last >= timedelta(minutes=ACTION_COOLDOWN_MINUTES)
+            if any(seen.values()) and dist <= gun_nm and cooled:
+                _surface_action(state, a, b, seen, resolver, out)
+                fought |= {a.id, b.id}
+    return fought
+
+
+def _damage_control(state: GameState, hours: float, busy: set[str], out: list[Event]) -> None:
+    """At sea, each damaged ship may fix one repairable hit per tick. Not in a tick when her group fought."""
+    for tf in state.task_forces:
+        if tf.id in busy:
+            continue
+        p = 1 - (1 - state.doctrine[tf.side].damage_control_p) ** hours
+        for ship in tf.afloat:
+            if ship.repairable <= 0 or _rng(state, f"dc:{tf.id}:{ship.name}").random() >= p:
+                continue
+            deck_was_out = ship.deck_out
+            ship.damage -= 1
+            ship.repairable -= 1
+            deck = " Her flight deck is in use again." if deck_was_out and not ship.deck_out else ""
+            _emit(state, out, "repaired", f"{ship.name}: damage control repaired one hit.{deck}", tf.side)
 
 
 # --- public API --------------------------------------------------------------------------------
@@ -483,6 +651,7 @@ def step(
     minutes: int,
     resolver: Resolver,
     stop_on: Interrupts = frozenset(),
+    surface_resolver: SurfaceResolver | None = None,
 ) -> StepResult:
     """Apply orders, then run up to `minutes` of game time. Never mutates the input state."""
     if state.pending:
@@ -493,6 +662,7 @@ def step(
         apply_orders(s, side, (orders or {})[side], out)
 
     hours = s.tick_minutes / 60
+    surface = surface_resolver or AutoSurfaceResolver()
     for _ in range(max(0, minutes // s.tick_minutes)):
         if s.time >= s.end:
             break
@@ -502,9 +672,12 @@ def step(
         rng = _rng(s)
         before = len(out)
         _daylight_events(s, prev, out)
+        start = {t.id: t.pos for t in s.task_forces}
         _move(s, hours, out)
+        fought = _surface(s, start, surface, out)
         _search(s, rng, out)
         _strikes(s, resolver, rng, out)
+        _damage_control(s, hours, fought, out)
         if s.pending or _should_stop(out[before:], stop_on):
             return StepResult(state=s, events=out, interrupted=True)
     return StepResult(state=s, events=out, interrupted=False)
@@ -517,13 +690,15 @@ def advance(
     resolver: Resolver,
     max_minutes: int = 24 * 60,
     stop_on: Interrupts = DEFAULT_INTERRUPTS,
+    surface_resolver: SurfaceResolver | None = None,
 ) -> StepResult:
     """Speed-up: run quiet time until something happens that a player should react to.
 
     `stop_on` is one set of kinds (solo, umpire) or a set per side (two-player): an event stops
     the clock only if a side that can see it has listed its kind.
     """
-    return step(state, orders, minutes=max_minutes, resolver=resolver, stop_on=stop_on)
+    return step(state, orders, minutes=max_minutes, resolver=resolver, stop_on=stop_on,
+                surface_resolver=surface_resolver)
 
 
 def _check_result(e: Engagement, r: EngagementResult) -> None:

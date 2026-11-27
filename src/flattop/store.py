@@ -32,7 +32,7 @@ from flattop.engine import (
 )
 from flattop.model import EngagementResult, GameState, Side
 from flattop.orders import OrderError, Orders
-from flattop.resolve import AutoResolver, Resolver, TabletopResolver
+from flattop.resolve import AutoResolver, AutoSurfaceResolver, Resolver, SurfaceResolver, TabletopResolver
 from flattop.scenario import load_scenario
 from flattop.view import view
 
@@ -83,6 +83,7 @@ class GameConfig(BaseModel):
     scenario: str = "eastern_solomons"
     mode: Mode = Mode.SOLO
     resolver: Literal["auto", "tabletop"] = "auto"
+    surface_resolver: Literal["auto"] = "auto"  # surface actions resolve automatically in every mode for now
     solo_side: Side = Side.ALLIED
     phase_minutes: int = Field(default=60, ge=10, le=24 * 60, multiple_of=10)
 
@@ -170,6 +171,10 @@ class Store:
     @staticmethod
     def resolver(cfg: GameConfig) -> Resolver:
         return TabletopResolver() if cfg.resolver == "tabletop" else AutoResolver()
+
+    @staticmethod
+    def surface_resolver(cfg: GameConfig) -> SurfaceResolver:
+        return AutoSurfaceResolver()
 
     # --- reads ------------------------------------------------------------------------------------
 
@@ -304,7 +309,8 @@ class Store:
                 orders[enemy] = _keep_valid(state, enemy, bot_orders(view(state, enemy)))
                 self._log(c, game_id, enemy.value, "bot", {"phase": phase, "at": state.time.isoformat(),
                                                            "orders": orders[enemy].model_dump(mode="json")})
-            res = step(state, orders, minutes=remaining, resolver=self.resolver(cfg), stop_on=self.interrupts(cfg))
+            res = step(state, orders, minutes=remaining, resolver=self.resolver(cfg), stop_on=self.interrupts(cfg),
+                       surface_resolver=self.surface_resolver(cfg))
             remaining -= int((res.state.time - state.time).total_seconds() // 60)
             state, orders = res.state, {}  # the player's orders are consumed by the first step
             if not (solo and res.interrupted and not state.pending and remaining > 0

@@ -25,7 +25,7 @@ from flattop.view import ContactView, SideView, WeatherView
 
 # Events that make the bot re-plan mid-run. They never stop the player's clock (see `Store.interrupts`).
 WAKE_ON: frozenset[EventKind] = frozenset(
-    {"sighting", "snooper", "strike_recovered", "search_returned", "strike_missed"}
+    {"sighting", "snooper", "strike_recovered", "search_returned", "strike_missed", "surface_contact", "surface_action"}
 )
 SNOOPER_MEMORY_MINUTES = 180
 FRESH_MINUTES = 180  # older contacts are too vague to strike

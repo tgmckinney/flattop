@@ -5,7 +5,17 @@ from __future__ import annotations
 import random
 from typing import Protocol
 
-from flattop.model import SHIP_CLASSES, AircraftType, Engagement, EngagementResult
+from flattop.model import (
+    SHIP_CLASSES,
+    AircraftType,
+    Doctrine,
+    Engagement,
+    EngagementResult,
+    Ship,
+    Side,
+    SurfaceAction,
+    SurfaceResult,
+)
 
 ESCORT_KILL = 0.12  # per fighter, per exchange, scaled by air_combat
 CAP_VS_BOMBER = 0.35
@@ -13,6 +23,12 @@ ESCORTS_TIE_UP = 0.5  # CAP fighters held off per escort
 FLAK_PER_POINT = 0.012
 FLAK_CAP = 0.3
 CARRIER_FIXATION = 0.8
+GUN_HIT_DAY = 0.06  # per gun roll, per round
+GUN_HIT_NIGHT = 0.10  # night actions are fought at close range
+TORPEDO_HIT = 0.15  # per torpedo roll, times the side's torpedo factor
+TORPEDO_DAMAGE = 2
+ROUNDS_DAY = 3
+ROUNDS_NIGHT = 2
 
 
 class Resolver(Protocol):
@@ -98,3 +114,54 @@ class AutoResolver:
             f"{released} released; {hits} ships hit"
         )
         return res
+
+
+class SurfaceResolver(Protocol):
+    """Resolves a surface action. Only automatic resolution exists now; a tabletop or tactical resolver can replace it."""
+
+    def resolve(self, a: SurfaceAction, doctrine: dict[Side, Doctrine], rng: random.Random) -> SurfaceResult: ...
+
+
+class AutoSurfaceResolver:
+    """Seeded rounds of gunfire, with one torpedo attack per side. A surprised side does not fire in round 1."""
+
+    def resolve(self, a: SurfaceAction, doctrine: dict[Side, Doctrine], rng: random.Random) -> SurfaceResult:
+        fleet: dict[Side, dict[str, Ship]] = {
+            side: {s.name: s.model_copy() for s in ships if not s.sunk} for side, ships in sorted(a.ships.items())
+        }
+        added: dict[Side, dict[str, int]] = {side: {} for side in fleet}
+        torpedoes_fired: set[Side] = set()
+        p_gun = GUN_HIT_DAY if a.daylight else GUN_HIT_NIGHT
+        rounds = ROUNDS_DAY if a.daylight else ROUNDS_NIGHT
+        for rnd in range(rounds):
+            incoming: dict[Side, dict[str, int]] = {side: {} for side in fleet}
+            for side in sorted(fleet):
+                if rnd == 0 and side in a.surprised:
+                    continue
+                enemy = [s for s in fleet.get(side.enemy, {}).values() if not s.sunk]
+                if not enemy:
+                    continue
+                fire_torpedoes = side not in torpedoes_fired
+                torpedoes_fired.add(side)
+                p_torp = TORPEDO_HIT * doctrine[side].torpedo_factor
+                for ship in (s for s in fleet[side].values() if not s.sunk):
+                    cls = SHIP_CLASSES[ship.type]
+                    for _ in range(cls.guns):
+                        if rng.random() < p_gun:
+                            _add(incoming[side.enemy], rng.choice(enemy).name)
+                    for _ in range(cls.torpedoes if fire_torpedoes else 0):
+                        if rng.random() < p_torp:
+                            _add(incoming[side.enemy], rng.choice(enemy).name, TORPEDO_DAMAGE)
+            for side, hits in incoming.items():  # fire in one round is simultaneous
+                for name, d in sorted(hits.items()):
+                    ship = fleet[side][name]
+                    d = min(d, SHIP_CLASSES[ship.type].capacity - ship.damage)
+                    if d > 0:
+                        ship.damage += d
+                        _add(added[side], name, d)
+        sunk = {side: sum(1 for s in ships.values() if s.sunk) for side, ships in fleet.items()}
+        return SurfaceResult(
+            ship_damage=added,
+            notes=[f"{rounds} rounds; " + "; ".join(
+                f"{side}: {len(added[side])} ships hit, {sunk[side]} sunk" for side in sorted(fleet))],
+        )

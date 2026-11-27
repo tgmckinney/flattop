@@ -41,15 +41,17 @@ class ShipClass(BaseModel):
     flak: float
     deck_out_at: int | None = None  # damage that closes a flight deck
     hangar: int = 0  # carrier aircraft she can operate (floatplanes on cruisers do not count)
+    guns: int = 0  # gun rolls per round in a surface action
+    torpedoes: int = 0  # torpedo rolls, once per action
 
 
 SHIP_CLASSES: dict[str, ShipClass] = {
-    "CV": ShipClass(capacity=6, flak=3, deck_out_at=2, hangar=90),
-    "CVL": ShipClass(capacity=3, flak=2, deck_out_at=1, hangar=37),
-    "BB": ShipClass(capacity=9, flak=5),
-    "CA": ShipClass(capacity=4, flak=3),
-    "CL": ShipClass(capacity=3, flak=3),
-    "DD": ShipClass(capacity=2, flak=1.5),
+    "CV": ShipClass(capacity=6, flak=3, deck_out_at=2, hangar=90, guns=1),
+    "CVL": ShipClass(capacity=3, flak=2, deck_out_at=1, hangar=37, guns=1),
+    "BB": ShipClass(capacity=9, flak=5, guns=6),
+    "CA": ShipClass(capacity=4, flak=3, guns=3, torpedoes=1),
+    "CL": ShipClass(capacity=3, flak=3, guns=2, torpedoes=1),
+    "DD": ShipClass(capacity=2, flak=1.5, guns=1, torpedoes=2),
     "AP": ShipClass(capacity=2, flak=0.5),
 }
 
@@ -58,6 +60,8 @@ class Ship(BaseModel):
     name: str
     type: ShipType
     damage: int = 0
+    repairable: int = 0  # part of `damage` that damage control at sea can still fix
+    radar_nm: float = 0  # range at which her radar finds a surface group; 0 means no radar
 
     @property
     def sunk(self) -> bool:
@@ -165,6 +169,23 @@ class Engagement(BaseModel):
     ships: list[Ship]
 
 
+class SurfaceAction(BaseModel):
+    """A gun and torpedo action between two surface groups, ready for resolution."""
+
+    id: str
+    time: datetime
+    pos: Pos
+    daylight: bool
+    tfs: dict[Side, str]
+    ships: dict[Side, list[Ship]]
+    surprised: list[Side] = Field(default_factory=list)  # sides that did not see the enemy first: no fire in round 1
+
+
+class SurfaceResult(BaseModel):
+    ship_damage: dict[Side, dict[str, int]] = Field(default_factory=dict)  # side -> ship name -> damage added
+    notes: list[str] = Field(default_factory=list)
+
+
 class EngagementResult(BaseModel):
     attacker_losses: dict[str, int] = Field(default_factory=dict)
     cap_losses: dict[str, int] = Field(default_factory=dict)
@@ -186,6 +207,9 @@ EventKind = Literal[
     "strike_recovered",
     "aircraft_lost",
     "ship_sunk",
+    "surface_contact",  # your group found enemy ships by radar or lookouts (private)
+    "surface_action",  # a gun and torpedo action; both sides get their own report
+    "repaired",  # damage control fixed a hit
 ]
 
 
@@ -225,6 +249,22 @@ class Front(BaseModel):
         return c is not None and distance_nm(c, p) <= self.radius_nm
 
 
+class Doctrine(BaseModel):
+    """Per-side training and equipment that the scenario can tune."""
+
+    day_lookout_nm: float = 20.0
+    night_lookout_nm: float = 5.0
+    torpedo_factor: float = Field(1.0, ge=0)  # multiplies the torpedo hit chance
+    damage_control_p: float = Field(0.3, ge=0, le=1)  # chance per hour to fix one repairable hit on each ship
+
+
+def default_doctrine() -> dict[Side, Doctrine]:
+    return {
+        Side.ALLIED: Doctrine(night_lookout_nm=5.0, torpedo_factor=0.5, damage_control_p=0.35),
+        Side.JAPAN: Doctrine(night_lookout_nm=8.0, torpedo_factor=1.0, damage_control_p=0.2),
+    }
+
+
 class Daylight(BaseModel):
     sunrise: time
     sunset: time
@@ -247,6 +287,10 @@ class GameState(BaseModel):
     pending: list[Engagement] = Field(default_factory=list)
     log: list[Event] = Field(default_factory=list)
     weather: list[Front] = Field(default_factory=list)
+    doctrine: dict[Side, Doctrine] = Field(default_factory=default_doctrine)
+    # Umpire-only memory of surface contact, keyed "<observer tf>|<target tf>" and "<tf>|<tf>" (sorted pair).
+    surface_seen: dict[str, datetime] = Field(default_factory=dict)
+    surface_fought: dict[str, datetime] = Field(default_factory=dict)
     # Per-side counters: a shared counter would let a player infer enemy activity from gaps in their own ids.
     next_id: dict[str, int] = Field(default_factory=dict)
 
