@@ -24,7 +24,7 @@
       "id": "TF11", "side": "allied", "name": "TF 11 (Saratoga)",
       "pos": {"lat": -10.3, "lon": 162.9}, "speed_kn": 12, "waypoint": {"lat": -9.6, "lon": 162.5},
       "ships": [
-        {"name": "Saratoga", "type": "CV"}, {"name": "Minneapolis", "type": "CA"}, {"name": "New Orleans", "type": "CA"},
+        {"name": "Saratoga", "type": "CV", "radar_nm": 10}, {"name": "Minneapolis", "type": "CA", "radar_nm": 10}, {"name": "New Orleans", "type": "CA", "radar_nm": 10},
         {"name": "Phelps", "type": "DD"}, {"name": "Farragut", "type": "DD"}, {"name": "Worden", "type": "DD"},
         {"name": "Macdonough", "type": "DD"}, {"name": "Dale", "type": "DD"}
       ],
@@ -34,8 +34,8 @@
       "id": "TF16", "side": "allied", "name": "TF 16 (Enterprise)",
       "pos": {"lat": -10.2, "lon": 163.1}, "speed_kn": 12, "waypoint": {"lat": -9.5, "lon": 162.7},
       "ships": [
-        {"name": "Enterprise", "type": "CV"}, {"name": "North Carolina", "type": "BB"}, {"name": "Portland", "type": "CA"},
-        {"name": "Atlanta", "type": "CL"}, {"name": "Balch", "type": "DD"}, {"name": "Benham", "type": "DD"},
+        {"name": "Enterprise", "type": "CV", "radar_nm": 10}, {"name": "North Carolina", "type": "BB", "radar_nm": 10}, {"name": "Portland", "type": "CA"},
+        {"name": "Atlanta", "type": "CL", "radar_nm": 10}, {"name": "Balch", "type": "DD"}, {"name": "Benham", "type": "DD"},
         {"name": "Maury", "type": "DD"}, {"name": "Ellet", "type": "DD"}, {"name": "Grayson", "type": "DD"},
         {"name": "Monssen", "type": "DD"}
       ],
@@ -78,6 +78,10 @@
     {"id": "RAB", "side": "japan", "name": "Rabaul", "pos": {"lat": -4.2, "lon": 152.2}, "air": {"A6M": 15, "G4M": 24}},
     {"id": "SHO", "side": "japan", "name": "Shortland", "pos": {"lat": -7.05, "lon": 155.85}, "air": {"H6K": 6}}
   ],
+  "doctrine": {
+    "allied": {"day_lookout_nm": 20, "night_lookout_nm": 5, "torpedo_factor": 0.5, "damage_control_p": 0.35},
+    "japan": {"day_lookout_nm": 20, "night_lookout_nm": 8, "torpedo_factor": 1.0, "damage_control_p": 0.2}
+  },
   "weather": [
     {"id": "W1", "name": "Front north of Malaita", "pos": {"lat": -7.0, "lon": 160.5}, "at": "1942-08-23T04:00:00",
      "radius_nm": 110, "drift_deg": 200, "drift_kn": 5, "end": "1942-08-24T08:00:00", "search_factor": 0.3, "acquire_nm": 10},
