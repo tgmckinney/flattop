@@ -4,10 +4,13 @@ import sqlite3
 import pytest
 from fastapi.testclient import TestClient
 from test_engine import staged
+from test_surface import place
 
+from flattop.engine import advance
 from flattop.geo import distance_nm
-from flattop.model import EngagementResult, GameState
+from flattop.model import EngagementResult, GameState, SurfaceResult
 from flattop.orders import Orders, SearchOrder, StrikeOrder
+from flattop.resolve import AutoResolver
 from flattop.scenario import load_scenario
 from flattop.server import create_app
 
@@ -113,6 +116,37 @@ def test_umpire_tabletop_flow(api, db):
     assert kinds[0] == "create" and "resolve" in kinds and kinds.count("advance") == 2
     body = api.post(f"/api/seats/{seats['umpire']}/advance", json={"advance": "phase"}).json()
     assert body["status"]["phase"] == 4
+
+
+def test_umpire_tabletop_surface_action(api, db):
+    seats = new_game(api, mode="umpire", resolver="auto", surface_resolver="tabletop", phase_minutes=60)
+    s = advance(load_scenario("eastern_solomons"), resolver=AutoResolver(), stop_on=frozenset({"dusk"})).state
+    s = s.model_copy(deep=True)
+    s.weather = []
+    for tf in s.task_forces:
+        tf.waypoint, tf.speed_kn = None, 0
+    put_state(db, seats["umpire"], place(s, 3))
+    submit(api, seats["japan"])
+    body = submit(api, seats["allied"])
+    assert body["status"]["awaiting_umpire"] and body["status"]["surface_resolver"] == "tabletop"
+    sheets = api.get(f"/api/seats/{seats['umpire']}/engagements").json()
+    assert len(sheets) == 1 and sheets[0]["engagement"]["kind"] == "surface" and "Jintsu" in sheets[0]["sheet_md"]
+    aid = sheets[0]["engagement"]["id"]
+    url = f"/api/seats/{{}}/surface-actions/{aid}"
+    good = SurfaceResult(ship_damage={"japan": {"Jintsu": 1}}).model_dump(mode="json")
+    assert api.post(url.format(seats["allied"]), json=good).status_code == 403
+    bad = SurfaceResult(ship_damage={"allied": {"Jintsu": 1}}).model_dump(mode="json")
+    assert api.post(url.format(seats["umpire"]), json=bad).status_code == 422
+    assert api.post(f"/api/seats/{seats['umpire']}/engagements/{aid}", json={}).status_code == 422
+    body = api.post(url.format(seats["umpire"]), json=good).json()
+    assert not body["status"]["awaiting_umpire"]
+    jintsu = next(sh for t in body["state"]["task_forces"] for sh in t["ships"] if sh["name"] == "Jintsu")
+    assert jintsu["damage"] == 1
+
+
+def test_two_player_rejects_tabletop_surface(api):
+    r = api.post("/api/games", json={"mode": "two_player", "surface_resolver": "tabletop"})
+    assert r.status_code == 422
 
 
 def _strings(x) -> list[str]:

@@ -614,6 +614,7 @@ function umpirePanel() {
 function resolvePanel() {
   const sec = h("section", {}, h("h2", {}, "Battle awaiting result"));
   for (const { engagement: e, sheet_md } of S.sheets) {
+    if (e.kind === "surface") { sec.append(...surfaceForm(e, sheet_md)); continue; }
     const num = (max) => h("input", { type: "number", min: 0, max, value: 0 });
     const att = Object.fromEntries(Object.entries(e.attackers).map(([k, n]) => [k, num(n)]));
     const cap = Object.fromEntries(Object.entries(e.defender_cap).map(([k, n]) => [k, num(n)]));
@@ -630,6 +631,23 @@ function resolvePanel() {
       } }, "Enter result"));
   }
   return sec;
+}
+
+function surfaceForm(e, sheet_md) {
+  const sides = Object.keys(e.ships).sort();
+  const inputs = Object.fromEntries(sides.map((side) => [side, Object.fromEntries(e.ships[side].map((s) =>
+    [s.name, h("input", { type: "number", min: 0, max: CAPACITY[s.type] - s.damage, value: 0 })]))]));
+  const vals = (o) => Object.fromEntries(Object.entries(o).map(([k, el]) => [k, +el.value]).filter(([, n]) => n > 0));
+  return [h("pre", {}, sheet_md),
+    ...sides.map((side) => h("div", {}, h("div", { class: "muted small" }, `Damage to ${side} ships`),
+      h("div", { class: "row" }, Object.entries(inputs[side]).map(([k, el]) => h("label", { class: "small" }, `${k} `, el))))),
+    h("button", { class: "primary", onclick: async () => {
+      try {
+        const ship_damage = Object.fromEntries(sides.map((side) => [side, vals(inputs[side])]));
+        S.body = await post(`/api/seats/${seat}/surface-actions/${e.id}`, { ship_damage });
+        await loadSheets(); render();
+      } catch (err) { toast(err.message); }
+    } }, "Enter result")];
 }
 
 // --- actions ---------------------------------------------------------------------------------
@@ -684,6 +702,7 @@ async function setup() {
     e.preventDefault();
     const cfg = Object.fromEntries(new FormData(form));
     cfg.phase_minutes = +cfg.phase_minutes;
+    if (!cfg.surface_resolver) delete cfg.surface_resolver;
     try {
       const { seats } = await post("/api/games", cfg);
       const out = $("#seat-links");

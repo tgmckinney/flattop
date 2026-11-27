@@ -11,10 +11,10 @@ from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from flattop.model import Engagement, EngagementResult, GameState, Side
+from flattop.model import EngagementResult, GameState, Pending, Side, SurfaceAction, SurfaceResult
 from flattop.orders import Orders
 from flattop.scenario import list_scenarios
-from flattop.sheet import engagement_sheet
+from flattop.sheet import engagement_sheet, surface_sheet
 from flattop.store import Advance, GameConfig, Role, SeatStatus, Store, StoreError
 from flattop.view import SideView, WeatherView, view, weather_now
 
@@ -52,7 +52,7 @@ class SeatView(BaseModel):
 
 
 class PendingSheet(BaseModel):
-    engagement: Engagement
+    engagement: Pending  # `kind` is "air" or "surface"
     sheet_md: str
 
 
@@ -98,11 +98,17 @@ def create_app(db_path: str | None = None) -> FastAPI:
         role, cfg, state, _ = store.seat(token)
         if not store.can_resolve(cfg, role):
             raise HTTPException(403, "only the umpire (or a solo player) sees engagement sheets")
-        return [PendingSheet(engagement=e, sheet_md=engagement_sheet(e, state.aircraft_types)) for e in state.pending]
+        return [PendingSheet(engagement=e, sheet_md=surface_sheet(e, state.doctrine) if isinstance(e, SurfaceAction)
+                             else engagement_sheet(e, state.aircraft_types)) for e in state.pending]
 
     @app.post("/api/seats/{token}/engagements/{engagement_id}")
     def resolve(token: str, engagement_id: str, result: EngagementResult) -> SeatView:
         store.resolve(token, engagement_id, result)
+        return seat_view(token)
+
+    @app.post("/api/seats/{token}/surface-actions/{action_id}")
+    def resolve_surface(token: str, action_id: str, result: SurfaceResult) -> SeatView:
+        store.resolve(token, action_id, result)
         return seat_view(token)
 
     @app.get("/api/seats/{token}/actions")

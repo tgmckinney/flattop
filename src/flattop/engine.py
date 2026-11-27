@@ -32,6 +32,7 @@ from flattop.model import (
     Side,
     StrikeMission,
     SurfaceAction,
+    SurfaceResult,
     TaskForce,
 )
 from flattop.orders import CapOrder, MoveOrder, OrderError, Orders, SearchOrder, StrikeOrder
@@ -575,38 +576,53 @@ def _surface_contact(state: GameState, obs: TaskForce, tgt: TaskForce, way: str,
 
 
 def _surface_action(state: GameState, a: TaskForce, b: TaskForce, seen: dict[Side, str | None],
-                    resolver: SurfaceResolver, out: list[Event]) -> None:
+                    resolver: SurfaceResolver, out: list[Event]) -> bool:
+    """Start an action between `a` and `b`. Returns True if it resolved now, False if it waits for the tabletop."""
     act = SurfaceAction(
         id=state.new_id("A"), time=state.time, pos=b.pos, daylight=state.is_day(),
         tfs={a.side: a.id, b.side: b.id},
         ships={a.side: [s.model_copy() for s in a.afloat], b.side: [s.model_copy() for s in b.afloat]},
         surprised=[side for side, way in sorted(seen.items()) if way is None],
     )
-    rng = _rng(state, f"action:{act.id}")
-    res = resolver.resolve(act, state.doctrine, rng)
     state.surface_fought["|".join(sorted((a.id, b.id)))] = state.time
-    # Each side describes the enemy as it saw it at the start of the action.
-    seen_as = {tf.side: _describe(enemy, _rng(state, f"actdesc:{act.id}:{tf.side}")) for tf, enemy in ((a, b), (b, a))}
-    losses: dict[Side, tuple[list[str], list[str]]] = {}
-    for tf in (a, b):
-        losses[tf.side] = _damage_tf(state, tf, res.ship_damage.get(tf.side, {}), rng, out)
     for tf, enemy in ((a, b), (b, a)):
-        hit, sunk = losses[tf.side]
-        e_hit, e_sunk = losses[enemy.side]
-        seen_hit = len(e_hit) + len(e_sunk)
-        first = " We opened fire first." if enemy.side in act.surprised else (
-            " The enemy opened fire first." if tf.side in act.surprised else "")
-        desc = seen_as[tf.side]
-        _emit(state, out, "surface_action",
-              f"Surface action at {fmt_pos(act.pos)}: {tf.name} engaged enemy ships, {desc}.{first} "
-              f"Our ships hit: {', '.join(hit) or 'none'}. Sunk: {', '.join(sunk) or 'none'}. "
-              f"Enemy ships seen hit: {seen_hit}{', a ship seen sinking' if e_sunk else ''}.", tf.side)
-        for name in sunk:
-            _emit(state, out, "ship_sunk", f"{name} has sunk.", tf.side)
-        # After a fight each side knows where the other is. Keep the action report as the only event.
+        # In contact now, each side knows about where the other is. The action report is the only event.
         state.surface_seen[f"{tf.id}|{enemy.id}"] = state.time
-        if enemy.afloat:
-            _close_contact(state, tf.side, enemy, 1.0, desc, _rng(state, f"actpos:{act.id}:{tf.side}"))
+        _close_contact(state, tf.side, enemy, 1.0, _seen_as(state, act, tf.side, enemy),
+                       _rng(state, f"actpos:{act.id}:{tf.side}"))
+    res = resolver.resolve(act, state.doctrine, _rng(state, f"action:{act.id}"))
+    if res is None:
+        state.pending.append(act)
+        for tf in (a, b):
+            _emit(state, out, "engagement_pending",
+                  f"{tf.name} is in a surface action. Wait for the umpire's result.", tf.side)
+        return False
+    _apply_surface(state, act, res, out)
+    return True
+
+
+def _seen_as(state: GameState, act: SurfaceAction, side: Side, enemy: TaskForce) -> str:
+    """How `side` describes the enemy group in this action. The same before and after a tabletop pause."""
+    return _describe(enemy, _rng(state, f"actdesc:{act.id}:{side}"))
+
+
+def _apply_surface(state: GameState, act: SurfaceAction, res: SurfaceResult, out: list[Event]) -> None:
+    tfs = {side: state.tf(tf_id) for side, tf_id in act.tfs.items()}
+    assert all(tfs.values())
+    seen_as = {side: _seen_as(state, act, side, tfs[side.enemy]) for side in tfs}  # before damage
+    rng = _rng(state, f"hits:{act.id}")
+    losses = {side: _damage_tf(state, tf, res.ship_damage.get(side, {}), rng, out) for side, tf in sorted(tfs.items())}
+    for side, tf in sorted(tfs.items()):
+        hit, sunk = losses[side]
+        e_hit, e_sunk = losses[side.enemy]
+        first = " We opened fire first." if side.enemy in act.surprised else (
+            " The enemy opened fire first." if side in act.surprised else "")
+        _emit(state, out, "surface_action",
+              f"Surface action at {fmt_pos(act.pos)}: {tf.name} engaged enemy ships, {seen_as[side]}.{first} "
+              f"Our ships hit: {', '.join(hit) or 'none'}. Sunk: {', '.join(sunk) or 'none'}. "
+              f"Enemy ships seen hit: {len(e_hit) + len(e_sunk)}{', a ship seen sinking' if e_sunk else ''}.", side)
+        for name in sunk:
+            _emit(state, out, "ship_sunk", f"{name} has sunk.", side)
 
 
 def _surface(state: GameState, start: Mapping[str, Pos], resolver: SurfaceResolver, out: list[Event]) -> set[str]:
@@ -721,14 +737,33 @@ def _check_result(e: Engagement, r: EngagementResult) -> None:
         raise EngineError("tabletop result rejected: " + "; ".join(problems))
 
 
-def resolve_pending(state: GameState, engagement_id: str, result: EngagementResult) -> StepResult:
-    """Feed a tabletop result back in. The strike then turns for home."""
+def _check_surface_result(a: SurfaceAction, r: SurfaceResult) -> None:
+    problems: list[str] = []
+    for side, damage in r.ship_damage.items():
+        names = {sh.name for sh in a.ships.get(side, [])}
+        problems += [f"{side} ship {n!r} not in action" for n in damage if n not in names]
+        problems += [f"{side} ship {n!r}: negative damage" for n, d in damage.items() if d < 0]
+    if problems:
+        raise EngineError("tabletop result rejected: " + "; ".join(problems))
+
+
+def resolve_pending(state: GameState, engagement_id: str, result: EngagementResult | SurfaceResult) -> StepResult:
+    """Feed a tabletop result back in. After an air attack the strike turns for home."""
     s = state.model_copy(deep=True)
     e = next((e for e in s.pending if e.id == engagement_id), None)
     if e is None:
         raise EngineError(f"{engagement_id}: no pending engagement")
-    _check_result(e, result)
-    s.pending.remove(e)
     out: list[Event] = []
-    _apply_result(s, e, result, out)
+    if isinstance(e, SurfaceAction):
+        if not isinstance(result, SurfaceResult):
+            raise EngineError(f"{engagement_id}: surface action; send a surface result")
+        _check_surface_result(e, result)
+        s.pending.remove(e)
+        _apply_surface(s, e, result, out)
+    else:
+        if not isinstance(result, EngagementResult):
+            raise EngineError(f"{engagement_id}: air engagement; send an air result")
+        _check_result(e, result)
+        s.pending.remove(e)
+        _apply_result(s, e, result, out)
     return StepResult(state=s, events=out, interrupted=bool(s.pending))
