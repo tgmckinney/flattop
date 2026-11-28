@@ -8,7 +8,17 @@ from pydantic import BaseModel
 
 from flattop.contacts import age_hours, estimate
 from flattop.geo import Pos
-from flattop.model import Airbase, AircraftType, Event, GameState, SearchMission, Side, StrikeMission, TaskForce
+from flattop.model import (
+    Airbase,
+    AircraftType,
+    Daylight,
+    Event,
+    GameState,
+    SearchMission,
+    Side,
+    StrikeMission,
+    TaskForce,
+)
 
 
 class ContactView(BaseModel):
@@ -48,6 +58,7 @@ class SideView(BaseModel):
     time: datetime
     end: datetime
     is_day: bool
+    daylight: Daylight  # public: sunrise and sunset
     task_forces: list[TaskForce]
     airbases: list[Airbase]
     contacts: list[ContactView]
@@ -76,6 +87,7 @@ def view(state: GameState, side: Side) -> SideView:
         time=state.time,
         end=state.end,
         is_day=state.is_day(),
+        daylight=state.daylight,
         task_forces=[t.model_copy(deep=True) for t in state.task_forces if t.side is side],
         airbases=[b.model_copy(deep=True) for b in state.airbases if b.side is side],
         contacts=contacts,

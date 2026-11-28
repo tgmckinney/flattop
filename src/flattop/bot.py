@@ -10,7 +10,16 @@ Doctrine, kept deliberately simple:
   with it; a crippled group retires into cloud if there is some on the way out. Old reports of a group
   under cloud are not worth a strike (it will not be found), so the scouts go back instead, and with no
   other lead they look into nearby fronts first.
-- Groups without carriers follow the scenario's waypoints.
+- Carrier groups avoid night surface action: after dark, any fresh contact within two hours' steaming
+  (about 60 nm) sends them directly away from it.
+- Surface groups (warships, no carrier decks):
+  - At dusk and at night, a group of warships only goes after the best fresh contact it can reach before
+    dawn at full speed, aimed at the intercept point.
+  - A group with transports keeps its mission instead: it runs for its scenario `objective` at transport
+    speed, by day and by night, unless enemy carriers threaten it. With no objective it keeps its orders.
+  - By day, a surface group inside enemy carrier air reach (the longest dive or torpedo bomber radius)
+    hides under nearby cloud, else steams directly out of reach. Otherwise it keeps its orders.
+  - A crippled surface group (more than half its ships hit or sunk) retires as a crippled carrier group does.
 """
 
 from __future__ import annotations
@@ -44,6 +53,12 @@ HIDE_KN = 20
 HIDE_MARGIN_NM = 15  # inside the edge by this much counts as hidden
 KEEP_PACE_HOURS = 3  # a group under a drifting front aims where the centre will be this far ahead
 CLOUD_STRIKE_MAX_AGE = 30  # minutes: an older report of a group under cloud is not worth a strike
+SURFACE_KN = 30  # a warship group at full speed
+TRANSPORT_KN = 10  # a group held to the speed of its transports
+NIGHT_AVOID_NM = 2 * SURFACE_KN  # carriers keep at least two hours' steaming from enemy ships after dark
+NIGHT_AVOID_RUN_NM = 100
+OUT_OF_REACH_MARGIN_NM = 30
+WARSHIPS = ("BB", "CA", "CL", "DD")
 
 Unit = TaskForce | Airbase
 BOMBER_ROLES = ("dive", "torpedo", "level")
@@ -157,22 +172,87 @@ def _carriers(tf: TaskForce) -> tuple[int, int]:
     return len(cv), sum(1 for s in cv if not s.sunk and not s.deck_out)
 
 
+def _retire(tf: TaskForce, v: SideView, speed: float = DASH_KN) -> MoveOrder | None:
+    """Into cloud on the way out, else away from the nearest known enemy, else toward the nearest friendly field."""
+    if v.contacts:
+        c = min(v.contacts, key=lambda c: distance_nm(tf.pos, c.estimated_pos))
+        away = (bearing_deg(c.estimated_pos, tf.pos)) % 360
+        if m := _shelter(tf, v, ok=lambda p: distance_nm(p, c.estimated_pos) > distance_nm(tf.pos, c.estimated_pos)):
+            return m
+    elif v.airbases:
+        away = bearing_deg(tf.pos, min(v.airbases, key=lambda b: distance_nm(tf.pos, b.pos)).pos)
+    else:
+        return None
+    return MoveOrder(tf_id=tf.id, waypoint=destination(tf.pos, away, RETIRE_NM), speed_kn=speed)
+
+
+def _hours_to_dawn(v: SideView) -> float:
+    dawn = datetime.combine(v.time.date(), v.daylight.sunrise, tzinfo=v.time.tzinfo)
+    if dawn <= v.time:
+        dawn += timedelta(days=1)
+    return (dawn - v.time).total_seconds() / 3600
+
+
+def _fresh(v: SideView) -> list[ContactView]:
+    return [c for c in v.contacts if c.age_minutes <= FRESH_MINUTES]
+
+
+def _avoid_at_night(tf: TaskForce, v: SideView) -> MoveOrder | None:
+    """After dark, steam directly away from the nearest fresh contact inside NIGHT_AVOID_NM."""
+    near = [c for c in _fresh(v) if distance_nm(tf.pos, c.estimated_pos) <= NIGHT_AVOID_NM]
+    if v.is_day or not near:
+        return None
+    c = min(near, key=lambda c: distance_nm(tf.pos, c.estimated_pos))
+    away = bearing_deg(c.estimated_pos, tf.pos)
+    return MoveOrder(tf_id=tf.id, waypoint=destination(tf.pos, away, NIGHT_AVOID_RUN_NM), speed_kn=DASH_KN)
+
+
+def _crippled(tf: TaskForce) -> bool:
+    return sum(1 for s in tf.ships if s.sunk or s.damage > 0) * 2 > len(tf.ships)
+
+
+def _surface_move(tf: TaskForce, v: SideView, types: dict[str, AircraftType]) -> MoveOrder | None:
+    """Orders for a group with warships and no carrier decks. None keeps its current orders."""
+    transports = any(s.type == "AP" for s in tf.afloat)
+    speed = TRANSPORT_KN if transports else SURFACE_KN
+    if _crippled(tf):
+        return _retire(tf, v, speed)
+    if v.is_day:
+        reach = max((t.strike_radius_nm for t in types.values() if t.role in ("dive", "torpedo")), default=0)
+        threats = [c for c in _fresh(v) if "carrier" in c.description
+                   and distance_nm(tf.pos, c.estimated_pos) <= reach + OUT_OF_REACH_MARGIN_NM]
+        if threats:
+            c = min(threats, key=lambda c: distance_nm(tf.pos, c.estimated_pos))
+            if m := _shelter(tf, v):
+                return m
+            goal = destination(c.estimated_pos, bearing_deg(c.estimated_pos, tf.pos), reach + OUT_OF_REACH_MARGIN_NM)
+            return MoveOrder(tf_id=tf.id, waypoint=goal, speed_kn=speed)
+        if not transports:
+            return None
+    if transports:
+        if tf.objective is None or distance_nm(tf.pos, tf.objective) < 1:
+            return None
+        return MoveOrder(tf_id=tf.id, waypoint=tf.objective, speed_kn=speed)
+    run = SURFACE_KN * _hours_to_dawn(v)
+    reachable = []
+    for c in _fresh(v):
+        aim = intercept(tf.pos, c.estimated_pos, c.reported_course, c.reported_speed_kn, SURFACE_KN)
+        if distance_nm(tf.pos, aim) <= run:
+            reachable.append((c, aim))
+    if not reachable:
+        return None
+    _, aim = max(reachable, key=lambda ca: (_score(ca[0]), -distance_nm(tf.pos, ca[1])))
+    return MoveOrder(tf_id=tf.id, waypoint=aim, speed_kn=SURFACE_KN)
+
+
 def _move(tf: TaskForce, v: SideView, types: dict[str, AircraftType]) -> MoveOrder | None:
     total, working = _carriers(tf)
     if not total:
-        return None
-    if working * 2 < total:  # retire: into cloud on the way out, else away from the nearest known enemy,
-        # else toward the nearest friendly field
-        if v.contacts:
-            c = min(v.contacts, key=lambda c: distance_nm(tf.pos, c.estimated_pos))
-            away = (bearing_deg(c.estimated_pos, tf.pos)) % 360
-            if m := _shelter(tf, v, ok=lambda p: distance_nm(p, c.estimated_pos) > distance_nm(tf.pos, c.estimated_pos)):
-                return m
-        elif v.airbases:
-            away = bearing_deg(tf.pos, min(v.airbases, key=lambda b: distance_nm(tf.pos, b.pos)).pos)
-        else:
-            return None
-        return MoveOrder(tf_id=tf.id, waypoint=destination(tf.pos, away, RETIRE_NM), speed_kn=DASH_KN)
+        return _surface_move(tf, v, types) if any(s.type in WARSHIPS for s in tf.afloat) else None
+    if working * 2 < total:
+        return _retire(tf, v)
+    if m := _avoid_at_night(tf, v):
+        return m
     reach = max((types[k].strike_radius_nm for k, n in tf.air.items()
                  if n > 0 and types[k].role in BOMBER_ROLES), default=0)
     memory = FRESH_MINUTES if v.is_day else NIGHT_MEMORY_MINUTES
