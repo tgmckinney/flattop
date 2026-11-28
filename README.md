@@ -12,6 +12,7 @@ WW2 Pacific carrier campaign aid. The engine runs in phases, with simultaneous o
 | `resolve.py` | Air: `AutoResolver` (seeded) and `TabletopResolver` (pauses for the umpire). Surface: `AutoSurfaceResolver` and `TabletopSurfaceResolver` |
 | `bot.py` | Solo opponent: reads only its own `SideView`; searches, holds CAP, strikes fresh contacts, closes to strike range, retires when crippled, hides under cloud when threatened, searches into fronts |
 | `view.py` | `view(state, side)`: the only thing a player client should receive |
+| `weather.py` | Generated weather: random fronts for a game, from a seed |
 | `sheet.py` | Markdown sheets for tabletop play: air engagements and surface actions |
 | `scenarios/` | Scenario JSON (Eastern Solomons, approximate) |
 | `store.py` | SQLite sessions: seats, phase submissions, append-only action log |
@@ -38,7 +39,15 @@ Only events a player can see stop their clock. With two hidden players that mean
 Scenarios list fronts (`weather` in the JSON): a circle that drifts in a straight line and exists between `start` and `end`.
 A group under cloud is harder to find: a search's chance of seeing it is multiplied by `search_factor`.
 A strike must come within `acquire_nm` of it to find it, instead of 30 nm.
-Weather is public; both sides see the same fronts. A search that cloud defeats reports nothing, as any miss does.
+Weather is public; both sides see the same fronts.
+
+A new game can use generated weather instead: set `weather` to `random` in the game config (the setup form has a "Weather" select).
+`weather.py` (`generate_weather`) makes the fronts from a seed. The store picks the seed at create and writes it in the action log (`weather_seed`), so the umpire can make the same weather again.
+
+- Fronts start inside the play area: the box around every task force and airbase, plus 1° on each side.
+- There are 3 fronts per scenario day. Each starts at a random time between the scenario start and 6 hours before its end, and lasts 12–36 hours.
+- All fronts drift on one prevailing direction (random per game), plus or minus 40°, at 3–10 knots.
+- Radius is 40–120 nm. A front of 90 nm or more is thick cloud (`search_factor` 0.3, `acquire_nm` 10). A smaller one is squalls (0.5, 15). A search that cloud defeats reports nothing, as any miss does.
 
 ## Surface action
 
