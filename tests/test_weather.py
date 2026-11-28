@@ -10,7 +10,9 @@ from flattop.geo import Pos, destination, distance_nm
 from flattop.model import Contact, Front, GameState
 from flattop.orders import Orders, SearchOrder, StrikeOrder
 from flattop.scenario import load_scenario
+from flattop.store import GameConfig, Store
 from flattop.view import view
+from flattop.weather import generate_weather, play_area
 
 
 def front_over(s: GameState, tf_id: str, **kw) -> Front:
@@ -83,3 +85,34 @@ def test_scenario_has_weather_every_hour():
     while t <= s.end:
         assert any(f.centre(t) for f in s.weather), f"no weather at {t}"
         t += timedelta(hours=1)
+
+
+def test_generated_weather_is_seeded_and_inside_area_and_time():
+    s = load_scenario("eastern_solomons")
+    a = generate_weather(s, 7)
+    assert a == generate_weather(s, 7) and a != generate_weather(s, 8)
+    area = play_area(s)
+    assert len(a) == round(3 * (s.end - s.time).total_seconds() / 86400)
+    for f in a:
+        assert area.south <= f.pos.lat <= area.north and area.west <= f.pos.lon <= area.east
+        assert s.time <= f.at < s.end and (f.start is None or f.start == f.at)
+        assert f.end is None or f.at < f.end < s.end
+        assert 40 <= f.radius_nm <= 120 and 3 <= f.drift_kn <= 10 and 0 < f.search_factor < 1
+    assert len({f.id for f in a}) == len(a)
+
+
+def test_prevailing_drift_is_respected():
+    fronts = generate_weather(load_scenario("eastern_solomons"), 3, prevailing_deg=290)
+    assert all(min(abs(f.drift_deg - 290), 360 - abs(f.drift_deg - 290)) <= 41 for f in fronts)
+
+
+def test_store_random_weather_game(tmp_path):
+    store = Store(str(tmp_path / "w.db"))
+    _, seats = store.create(GameConfig(mode="umpire", weather="random"))
+    _, _, truth, _ = store.seat(seats["umpire"])
+    assert truth.weather and all(f.id.startswith("R") for f in truth.weather)
+    views = [view(truth, side).weather for side in (US, JP)]
+    assert views[0] == views[1]
+    create = store.actions(seats["umpire"])[0]
+    assert create["kind"] == "create" and generate_weather(load_scenario("eastern_solomons"),
+                                                           create["payload_json"]["weather_seed"]) == truth.weather

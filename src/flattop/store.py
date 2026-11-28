@@ -42,6 +42,7 @@ from flattop.resolve import (
 )
 from flattop.scenario import load_scenario
 from flattop.view import view
+from flattop.weather import generate_weather
 
 RUN_MAX_MINUTES = 24 * 60
 
@@ -101,6 +102,7 @@ class GameConfig(BaseModel):
         return "tabletop" in (self.resolver, self.surface)
     solo_side: Side = Side.ALLIED
     phase_minutes: int = Field(default=60, ge=10, le=24 * 60, multiple_of=10)
+    weather: Literal["scenario", "random"] = "scenario"  # random: fronts generated from a seed at create
 
 
 class SeatStatus(BaseModel):
@@ -239,6 +241,10 @@ class Store:
             state = load_scenario(cfg.scenario)
         except FileNotFoundError:
             raise StoreError(404, f"no scenario {cfg.scenario!r}") from None
+        log = cfg.model_dump(mode="json")
+        if cfg.weather == "random":
+            log["weather_seed"] = seed = secrets.randbelow(2**31)
+            state.weather = generate_weather(state, seed)
         game_id = secrets.token_urlsafe(6)
         seats: dict[Role, str] = {r: secrets.token_urlsafe(16) for r in self.roles(cfg)}
         with self._tx() as c:
@@ -250,7 +256,7 @@ class Store:
                 "INSERT INTO seats (token, game_id, role) VALUES (?, ?, ?)",
                 [(t, game_id, r) for r, t in seats.items()],
             )
-            self._log(c, game_id, "umpire", "create", cfg.model_dump(mode="json"))
+            self._log(c, game_id, "umpire", "create", log)
         return game_id, seats
 
     def submit(self, token: str, orders: Orders, advance: Advance) -> SeatStatus:
