@@ -214,3 +214,90 @@ def test_bot_searches_toward_cloud_with_no_other_lead():
     o = bot_orders(view(s, JP))
     x = next(x for x in o.searches if x.source_id == "KB")
     assert abs(_mid(x) - 60) <= 1.5
+
+
+# --- bot v3: surface groups and night approach -------------------------------------------------
+
+
+def _night(hours_after_dusk: int = 2) -> GameState:
+    """Clear night on day one, every group stopped, TF 11 and RYU far away."""
+    from flattop.engine import advance
+
+    s = advance(load_scenario("eastern_solomons"), resolver=AUTO, stop_on=frozenset({"dusk"})).state
+    s = step(s, minutes=60 * hours_after_dusk, resolver=AUTO).state.model_copy(deep=True)
+    s.weather = []
+    for tf in s.task_forces:
+        tf.waypoint, tf.speed_kn = None, 0
+    s.tf("TF11").pos = destination(s.tf("TF16").pos, 180, 500)
+    s.tf("RYU").pos = destination(s.tf("TF16").pos, 0, 600)
+    return s
+
+
+def _contact(s: GameState, side, target: str, desc: str) -> GameState:
+    from flattop.model import Contact
+
+    t = s.tf(target)
+    s.contacts.append(Contact(id=f"{side.value[0].upper()}-C9", side=side, target_id=target, reported_at=s.time,
+                              reported_pos=t.pos, reported_course=0, reported_speed_kn=0, error_nm=2, description=desc))
+    return s
+
+
+def _move_of(s: GameState, side, tf_id: str):
+    return next((m for m in bot_orders(view(s, side)).moves if m.tf_id == tf_id), None)
+
+
+def _warships_only(s: GameState, dist_nm: float) -> GameState:
+    tan = s.tf("TAN")
+    tan.ships = [sh for sh in tan.ships if sh.type != "AP"]
+    tan.pos = destination(s.tf("TF16").pos, 0, dist_nm)
+    return _contact(s, JP, "TF16", "1 carrier, 9 warships")
+
+
+def test_surface_group_intercepts_at_night_what_it_can_reach_before_dawn():
+    s = _warships_only(_night(), 120)
+    m = _move_of(s, JP, "TAN")
+    assert m.speed_kn == 30 and distance_nm(m.waypoint, s.tf("TF16").pos) < 5
+    far = _warships_only(_night(), 400)  # 400 nm at 30 kn is past dawn
+    assert _move_of(far, JP, "TAN") is None
+
+
+def test_transport_group_runs_for_its_objective_at_night():
+    s = _night()
+    tan = s.tf("TAN")
+    assert tan.objective is not None
+    m = _move_of(s, JP, "TAN")
+    assert m.waypoint == tan.objective and m.speed_kn == 10
+
+
+def test_transport_group_turns_away_from_carriers_by_day_and_resumes_when_clear():
+    s = staged(load_scenario("eastern_solomons"))
+    s.tf("TAN").pos = destination(s.tf("TF16").pos, 0, 150)
+    assert _move_of(s, JP, "TAN").waypoint == s.tf("TAN").objective  # no contact: keep the mission
+    s = _contact(s, JP, "TF16", "1 carrier, 9 warships")
+    m = _move_of(s, JP, "TAN")
+    assert distance_nm(m.waypoint, s.tf("TF16").pos) == pytest.approx(250 + 30, abs=3)
+
+
+def test_crippled_surface_group_retires():
+    s = _warships_only(_night(), 120)
+    for sh in s.tf("TAN").ships[:3]:
+        sh.damage = 1
+    m = _move_of(s, JP, "TAN")
+    tan, tf16 = s.tf("TAN").pos, s.tf("TF16").pos
+    assert distance_nm(m.waypoint, tf16) > distance_nm(tan, tf16) + 250
+
+
+def test_carrier_group_avoids_enemy_ships_at_night():
+    s = _night()
+    s.tf("KB").pos = destination(s.tf("TF16").pos, 0, 40)
+    s = _contact(s, JP, "TF16", "1 carrier, 9 warships")
+    m = _move_of(s, JP, "KB")
+    kb, tf16 = s.tf("KB").pos, s.tf("TF16").pos
+    assert distance_nm(m.waypoint, tf16) > distance_nm(kb, tf16) + 90
+
+
+def test_surface_bot_is_blind_to_enemy_truth():
+    s = _warships_only(_night(), 120)
+    moved = s.model_copy(deep=True)
+    moved.tf("TF11").pos = destination(moved.tf("TF11").pos, 90, 80)  # unseen
+    assert bot_orders(view(s, JP)) == bot_orders(view(moved, JP))

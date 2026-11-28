@@ -10,7 +10,7 @@ WW2 Pacific carrier campaign aid. The engine runs in phases, with simultaneous o
 | `orders.py` | Per-phase orders: move, CAP, search, strike |
 | `engine.py` | `step()` (fixed phase), `advance()` (run until something happens), `resolve_pending()` (tabletop result in) |
 | `resolve.py` | Air: `AutoResolver` (seeded) and `TabletopResolver` (pauses for the umpire). Surface: `AutoSurfaceResolver` and `TabletopSurfaceResolver` |
-| `bot.py` | Solo opponent: reads only its own `SideView`; searches, holds CAP, strikes fresh contacts, closes to strike range, retires when crippled, hides under cloud when threatened, searches into fronts |
+| `bot.py` | Solo opponent: reads only its own `SideView`; searches, holds CAP, strikes fresh contacts, closes to strike range, retires when crippled, hides under cloud when threatened, searches into fronts. Carrier groups steam away from enemy ships after dark. Warship groups hunt contacts they can reach before dawn. Transport groups run for their scenario `objective` and turn away from enemy carriers by day |
 | `view.py` | `view(state, side)`: the only thing a player client should receive |
 | `weather.py` | Generated weather: random fronts for a game, from a seed |
 | `sheet.py` | Markdown sheets for tabletop play: air engagements and surface actions |

@@ -80,6 +80,7 @@ class TaskForce(BaseModel):
     pos: Pos
     speed_kn: float = 0
     waypoint: Pos | None = None
+    objective: Pos | None = None  # scenario mission (e.g. a landing); the bot steers here, players may ignore it
     ships: list[Ship]
     air: dict[str, int] = Field(default_factory=dict)  # ready aircraft by type key
     cap: int = 0  # fighters held for combat air patrol
